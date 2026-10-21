@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Termine</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📅</text></svg>" />
+</head>
+<body>
+  <header class="app-header">
+    <a class="brand" href="../../" title="Zur Übersicht">Termine</a>
+    <span class="spacer"></span>
+    <button class="btn btn-ghost btn-sm" id="refresh" type="button" title="Neu laden">↻ <span id="stand"></span></button>
+    <button class="btn btn-ghost btn-sm" id="settings" type="button" title="Einstellungen">⚙ Einstellungen</button>
+    <button class="btn btn-ghost btn-sm" id="logout" type="button">Abmelden</button>
+  </header>
+  <main class="app-main narrow" id="main"></main>
+  <script type="module" src="./src/main.ts"></script>
+</body>
+</html>

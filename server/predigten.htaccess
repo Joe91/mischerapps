@@ -1,0 +1,8 @@
+# Als .htaccess in den Zielordner (predigten/) legen:
+# verhindert, dass dort hochgeladene Dateien als Skript ausgeführt werden.
+<FilesMatch "\.(php|phtml|php\d|phar|pl|py|cgi|sh)$">
+  Require all denied
+</FilesMatch>
+Options -ExecCGI -Indexes
+RemoveHandler .php .phtml .php3 .php4 .php5 .php7 .php8
+AddType audio/mpeg .mp3

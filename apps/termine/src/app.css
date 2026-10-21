@@ -1,0 +1,97 @@
+:root {
+  --yes: var(--ok);
+  --maybe: var(--warn);
+  --no: var(--danger);
+}
+
+.app-main.narrow { max-width: 860px; }
+.center { text-align: center; }
+
+/* ---- toolbar ---- */
+.toolbar { display: flex; align-items: flex-end; gap: .5rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.sign-label { flex-direction: row; align-items: center; gap: .5rem; color: var(--text); font-weight: 600; }
+.sign-input { width: 6.5rem; text-transform: uppercase; font-weight: 700; letter-spacing: .04em; }
+.toolbar input[type="date"] { font-size: .85rem; padding: .2rem .4rem; }
+
+/* ---- date card ---- */
+.date-card.past { opacity: .62; }
+.date-card.next { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), var(--shadow); }
+.date-head { display: flex; gap: 1rem; align-items: flex-start; }
+.date-info { flex: 1; min-width: 0; }
+.date-info h2 { font-size: 1.05rem; margin: 0 0 .15rem; display: flex; flex-wrap: wrap; align-items: baseline; gap: .1rem .5rem; }
+.date-title { font-weight: 600; color: var(--accent); }
+.edit-btn { flex-shrink: 0; }
+
+.cal {
+  flex-shrink: 0; width: 3.4rem; border-radius: 9px; overflow: hidden; text-align: center; line-height: 1.1;
+  border: 1px solid var(--border); background: var(--surface-2); display: flex; flex-direction: column;
+}
+.cal-dow { background: var(--accent); color: var(--on-accent); font-size: .72rem; font-weight: 700; padding: .15rem 0; text-transform: uppercase; }
+.date-card.extra .cal-dow { background: var(--music); }
+.cal-day { font-size: 1.35rem; font-weight: 700; padding-top: .2rem; font-variant-numeric: tabular-nums; }
+.cal-mon { font-size: .75rem; color: var(--muted); padding-bottom: .25rem; }
+
+.next-tag, .you-tag, .warn-tag {
+  font-size: .72rem; font-weight: 700; padding: .1rem .5rem; border-radius: 999px; white-space: nowrap;
+}
+.next-tag { background: var(--accent-soft); color: var(--accent); }
+.you-tag { background: var(--accent); color: var(--on-accent); margin-left: .4rem; }
+.warn-tag { margin-left: .4rem; }
+.warn-tag.ans-no { background: color-mix(in srgb, var(--no) 16%, transparent); color: var(--no); }
+.warn-tag.ans-maybe { background: color-mix(in srgb, var(--maybe) 16%, transparent); color: var(--maybe); }
+
+.assigned { margin-top: .2rem; font-size: .92rem; }
+.assigned.none { color: var(--muted); font-style: italic; }
+.note { white-space: pre-wrap; margin: .75rem 0 0; padding: .5rem .75rem; background: var(--surface-2); border-radius: 8px; font-size: .92rem; }
+
+/* ---- voting ---- */
+.vote-row { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; margin-top: .9rem; }
+.vote-q { font-weight: 600; }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 9px; overflow: hidden; }
+.seg-btn {
+  appearance: none; border: 0; background: var(--surface); color: var(--text); font: inherit; cursor: pointer;
+  padding: .45rem .9rem; display: inline-flex; gap: .35rem; align-items: center; min-height: 2.4rem;
+}
+.seg-btn + .seg-btn { border-left: 1px solid var(--border); }
+.seg-btn:hover { background: var(--surface-2); }
+.seg-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.seg-btn.on { color: #fff; font-weight: 600; }
+.seg-btn.on.ans-yes { background: var(--yes); }
+.seg-btn.on.ans-maybe { background: var(--maybe); }
+.seg-btn.on.ans-no { background: var(--no); }
+@media (prefers-color-scheme: dark) { .seg-btn.on { color: #111; } }
+
+.votes { margin-top: .75rem; display: grid; gap: .3rem; font-size: .9rem; }
+.vote-line { display: grid; grid-template-columns: 7.5rem 1fr; gap: .5rem; align-items: start; }
+.vote-head { color: var(--muted); padding-top: .1rem; }
+.vote-line.ans-yes .vote-head { color: var(--yes); }
+.vote-line.ans-maybe .vote-head { color: var(--maybe); }
+.vote-line.ans-no .vote-head { color: var(--no); }
+.chips { display: flex; flex-wrap: wrap; gap: .3rem; }
+.chip {
+  font-size: .8rem; font-weight: 700; letter-spacing: .03em; padding: .1rem .5rem; border-radius: 6px;
+  border: 1px solid transparent; background: var(--surface-2);
+}
+.chip.ans-yes { background: color-mix(in srgb, var(--yes) 16%, transparent); color: var(--yes); }
+.chip.ans-maybe { background: color-mix(in srgb, var(--maybe) 16%, transparent); color: var(--maybe); }
+.chip.ans-no { background: color-mix(in srgb, var(--no) 16%, transparent); color: var(--no); }
+.chip.ans-open { color: var(--muted); }
+.chip.me { border-color: currentColor; }
+.chip.assigned::after { content: " ★"; }
+
+/* ---- edit ---- */
+.edit-form { margin-top: .9rem; padding-top: .9rem; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: .8rem; }
+.edit-form .actions { margin-top: 0; }
+.narrow-dialog { width: min(520px, calc(100vw - 2rem)); }
+.row.nowrap { flex-wrap: nowrap; }
+.row.nowrap input { flex: 1; }
+
+@media (max-width: 640px) {
+  .date-head { gap: .7rem; }
+  .cal { width: 2.9rem; }
+  .vote-row { gap: .5rem; }
+  .seg { width: 100%; }
+  .seg-btn { flex: 1; justify-content: center; padding: .45rem .4rem; }
+  .vote-line { grid-template-columns: 6rem 1fr; }
+  .edit-btn { padding: .25rem .4rem; }
+}

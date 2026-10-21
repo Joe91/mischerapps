@@ -1,0 +1,8 @@
+node_modules/
+dist/
+uploads-dev/
+testdata/*
+!testdata/README.md
+!testdata/markers.example.json
+*.log
+*.zip

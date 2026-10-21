@@ -1,0 +1,16 @@
+[
+  {
+    "id": "predigt-schnitt",
+    "title": "Predigt schneiden",
+    "description": "Predigt automatisch erkennen, normalisieren, als MP3 exportieren und hochladen",
+    "path": "apps/predigt-schnitt/",
+    "icon": "✂️"
+  },
+  {
+    "id": "termine",
+    "title": "Termine",
+    "description": "Wer kann an welchem Sonntag? Zu- und Absagen, Einteilung und Hinweise für alle sichtbar",
+    "path": "apps/termine/",
+    "icon": "📅"
+  }
+]
