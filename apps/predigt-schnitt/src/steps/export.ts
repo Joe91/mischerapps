@@ -1,6 +1,6 @@
 import { h, fmtTime, fmtNum, fmtBytes, progressBar, download } from '../../../../packages/ui-kit/dom';
 import type { Tags } from '../../../../packages/audio-core/pipeline';
-import { processOptions, measurementKey, type Ctx, type Step } from '../context';
+import { processOptions, encodeOptions, measurementKey, type Ctx, type Step } from '../context';
 import { EXPORT_PRESETS, LOUDNESS_PRESETS, type ExportPresetId } from '../settings';
 import { buildFileName, sanitizeFileName } from '../naming';
 import { ensureMeasurement } from './loudness';
@@ -69,7 +69,7 @@ export function createExportStep(ctx: Ctx): Step {
     status.replaceChildren(bar.el);
     try {
       const o = processOptions(ctx);
-      const needMeasure = !(st.measurement && st.measurementKey === measurementKey(o));
+      const needMeasure = !(st.measurement && st.measurementKey === measurementKey(o, encodeOptions(ctx)));
       const split = needMeasure ? 0.4 : 0;
       const m = await ensureMeasurement(ctx, p => bar.set(p * split, 'Lautheit messen …'));
       const ep = EXPORT_PRESETS[s.exportPreset];

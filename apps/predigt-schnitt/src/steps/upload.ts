@@ -1,5 +1,7 @@
 import { h, progressBar, download, toast } from '../../../../packages/ui-kit/dom';
 import { uploadFile } from '../../../../packages/upload/http-upload';
+import { uploadToCloud } from '../../../../packages/upload/cloud-upload';
+import { UPLOAD_KINDS, profileKind } from '../settings';
 import type { Ctx, Step } from '../context';
 import { isValidFileName, sanitizeFileName } from '../naming';
 import { openSettings } from '../settings-dialog';
@@ -18,7 +20,7 @@ export function createUploadStep(ctx: Ctx): Step {
 
   function showTarget() {
     const p = profile();
-    target.textContent = p ? `Ziel: ${p.url}` : '';
+    target.textContent = p ? `Ziel: ${UPLOAD_KINDS[profileKind(p)].label} – ${p.url}` : '';
     uploadBtn.disabled = !p;
   }
 
@@ -38,13 +40,20 @@ export function createUploadStep(ctx: Ctx): Step {
     nameInput.value = name;
     ctx.state.fileName = name;
     if (!isValidFileName(name)) { toast('Ungültiger Dateiname.', 'error'); return; }
-    if (!p.token) { status.replaceChildren(h('div', { class: 'notice error' }, 'Für dieses Ziel ist kein Token hinterlegt (Einstellungen).')); return; }
+    const kind = profileKind(p);
+    if (kind === 'http-post' && !p.token) {
+      status.replaceChildren(h('div', { class: 'notice error' }, 'Für dieses Ziel ist kein Token hinterlegt (Einstellungen).'));
+      return;
+    }
     const bar = progressBar('Lade hoch …');
     const cancel = h('button', { class: 'btn btn-sm', type: 'button', onclick: () => abort?.() }, 'Abbrechen');
     status.replaceChildren(h('div', { class: 'row' }, bar.el, cancel));
     uploadBtn.disabled = true;
     try {
-      const up = uploadFile(p.url, p.token, r.blob, name, x => bar.set(x, 'Lade hoch …'));
+      const progress = (x: number) => bar.set(x, 'Lade hoch …');
+      const up = kind === 'http-post'
+        ? uploadFile(p.url, p.token, r.blob, name, progress)
+        : uploadToCloud(kind, p.url, p.token, r.blob, name, progress);
       abort = up.abort;
       await up.promise;
       ctx.state.uploadedAs = name;

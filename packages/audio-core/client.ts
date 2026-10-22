@@ -41,8 +41,8 @@ export class AudioWorkerClient {
   analyze(file: File, params: Partial<AnalysisParams>, onProgress?: (p: number) => void) {
     return this.call<AnalyzeOutput>({ type: 'analyze', file, params }, onProgress);
   }
-  measure(opts: ProcessOptions, onProgress?: (p: number) => void) {
-    return this.call<Measurement>({ type: 'measure', opts }, onProgress);
+  measure(opts: ProcessOptions, encode: EncodeOptions, onProgress?: (p: number) => void) {
+    return this.call<Measurement>({ type: 'measure', opts, encode }, onProgress);
   }
   render(opts: ProcessOptions, measurement: Measurement, encode: EncodeOptions, tags: Tags, onProgress?: (p: number) => void) {
     return this.call<RenderResult>({ type: 'render', opts, measurement, encode, tags }, onProgress);

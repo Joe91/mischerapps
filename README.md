@@ -82,12 +82,36 @@ Die echten PHP-Skripte laufen nicht im Dev-Server. Wer sie lokal ausprobieren wi
 2. **Schnitt** – Vorschlag für Start/Ende als orange Region; Übersicht mit Sprache/Musik/Stille,
    Alternativ-Vorschläge, Vorhören, Feinjustieren (Tastatur: Leertaste, S/E, ←/→, Umschalt, P).
 3. **Lautheit** – Messung nach EBU R128 (BS.1770), Anhebung auf Ziel (Standard −19 LUFS mono),
-   Look-ahead-Limiter, optional Hochpass 80 Hz und sanfte Kompression.
+   Look-ahead-Limiter, optional Hochpass 80 Hz und sanfte Kompression. Ein einziger Dekodier-Durchlauf:
+   Die Eingangslautheit ist aus der Analyse schon bekannt; der Limiter läuft parallel mit drei Verstärkungen,
+   die passende wird interpoliert.
 4. **Export** – MP3 (LAME/WASM, CBR), ID3-Tags, Dateiname nach Schema `predigt_eag_{datum}`.
    Die angezeigte Lautheit wird am fertigen MP3 gemessen.
-5. **Upload** – per HTTP an `server/upload.php` mit Fortschritt; alternativ Herunterladen.
+5. **Upload** – in einen Cloud-Ordner (OpenCloud/Nextcloud, öffentlicher Link) oder an `server/upload.php`,
+   mit Fortschritt; alternativ Herunterladen. Vorhandene Dateien werden nie überschrieben.
 
-## Zielserver einrichten (Upload)
+## Cloud-Ordner einrichten (OpenCloud / Nextcloud)
+
+1. In der Cloud einen Ordner (z. B. „Predigten“) per **öffentlichem Link** teilen, Berechtigung
+   „Bearbeiten“/„Hochladen“ oder „Nur hochladen“ (Dateiablage), mit Passwort.
+2. In der App: **Einstellungen → Upload-Ziele → + Ziel hinzufügen**, Art wählen, Freigabe-Link
+   (`https://cloud…/s/AbC123`) und Link-Passwort eintragen. Per „Als JSON exportieren“ (mit Token)
+   lässt sich das an die anderen Mischer weitergeben.
+3. **Einmalig beim Cloud-Admin:** Die Cloud muss Uploads von der Adresse der App erlauben (CORS),
+   sonst blockiert der Browser („Cloud nicht erreichbar … CORS“):
+   - **OpenCloud:** Umgebungsvariable `OC_CORS_ALLOW_ORIGINS=https://NAME.github.io` (mehrere mit Komma).
+   - **Nextcloud (Apache):** `server/cloud/nextcloud-apache-cors.conf` einbinden, Adresse eintragen,
+     Apache neu laden. Nextcloud ≥ 29 nötig. Bei gehosteten Nextclouds ohne Zugriff auf die
+     Server-Konfiguration geht es nicht – dann Herunterladen oder anderer Weg.
+
+Verhalten: Vor dem Upload prüft die App, ob die Datei schon existiert (Meldung statt Überschreiben).
+Bei Nextcloud-„Dateiablage“-Links ist diese Prüfung nicht möglich; Nextcloud legt dann „… (2).mp3“ an.
+Falsche Passwörter zählen bei Nextcloud zum Brute-Force-Schutz (nach mehreren Fehlversuchen wird gebremst).
+
+Lokal ausprobieren: `scripts/cloud-testserver.sh` startet eine OpenCloud in Docker
+(https://localhost:9200, Zertifikatswarnung einmal im Browser bestätigen) und gibt Link und Passwort aus.
+
+## Eigenes Upload-Skript (PHP)
 
 > **Vorläufig zurückgestellt:** Wie die Predigten auf den Zielserver bzw. in den Podcast-Feed kommen,
 > ist noch nicht geklärt. Bis dahin ist **Herunterladen** der Normalweg; das PHP-Skript unten ist ein

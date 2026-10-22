@@ -98,12 +98,12 @@ export class Limiter {
   private rel: number;
   private delay: Float32Array[];
   private dPos = 0;
-  // monotonic deque for the sliding minimum of required gain
-  private qVal: Float64Array;
-  private qIdx: Float64Array;
-  private qHead = 0;
-  private qTail = 0;
-  private n = 0;
+  // sliding minimum over L samples (van Herk/Gil-Werman): suffix minima of the previous block
+  // plus the running minimum of the current one – no data-dependent branches
+  private cur: Float64Array;
+  private suffix: Float64Array;
+  private run = Infinity;
+  private bPos = 0;
   private held = 1;
   private box: Float64Array;
   private boxSum: number;
@@ -116,42 +116,58 @@ export class Limiter {
     this.ceil = dbToLin(ceilingDb);
     this.rel = Math.exp(-1 / ((releaseMs / 1000) * sr));
     this.delay = Array.from({ length: channels }, () => new Float32Array(this.L));
-    this.qVal = new Float64Array(this.L + 2);
-    this.qIdx = new Float64Array(this.L + 2);
+    this.cur = new Float64Array(this.L);
+    this.suffix = new Float64Array(this.L + 1).fill(1);
+    this.suffix[this.L] = Infinity;
     this.box = new Float64Array(this.L).fill(1);
     this.boxSum = this.L;
   }
 
-  /** Processes in place; the returned arrays are the delayed output (same length as input). */
-  process(chs: Float32Array[]): void {
-    const L = this.L, cap = L + 2, len = chs[0].length;
+  /**
+   * Processes `chs` (scaled by `gain`) into `out` (default: in place). The output is the
+   * delayed signal, same length as the input. Hot loop: state in locals, branch-free math
+   * (speech crosses the ceiling constantly, so branches would be mispredicted).
+   */
+  process(chs: Float32Array[], gain = 1, out: Float32Array[] = chs): void {
+    const L = this.L, ceil = this.ceil, rel = this.rel, invL = 1 / L;
+    const cur = this.cur, suffix = this.suffix, box = this.box;
+    const x0 = chs[0], x1 = chs.length > 1 ? chs[1] : null;
+    const y0 = out[0], y1 = out.length > 1 ? out[1] : null;
+    const d0 = this.delay[0], d1 = this.delay.length > 1 ? this.delay[1] : null;
+    let run = this.run, bPos = this.bPos, held = this.held;
+    let boxSum = this.boxSum, boxPos = this.boxPos, dPos = this.dPos, minG = this.minGain;
+    const len = x0.length;
+    const stereo = !!(x1 && y1 && d1);
     for (let i = 0; i < len; i++) {
-      let peak = 0;
-      for (const c of chs) { const a = Math.abs(c[i]); if (a > peak) peak = a; }
-      const req = peak > this.ceil ? this.ceil / peak : 1;
-      // push into min-deque
-      while (this.qTail !== this.qHead && this.qVal[(this.qTail - 1 + cap) % cap] >= req) this.qTail = (this.qTail - 1 + cap) % cap;
-      this.qVal[this.qTail] = req; this.qIdx[this.qTail] = this.n; this.qTail = (this.qTail + 1) % cap;
-      while (this.qIdx[this.qHead] <= this.n - L) this.qHead = (this.qHead + 1) % cap;
-      const winMin = this.qVal[this.qHead];
-      // release, never above the window minimum
-      this.held = Math.min(winMin, 1 - (1 - this.held) * this.rel);
-      // box smoothing
-      this.boxSum += this.held - this.box[this.boxPos];
-      this.box[this.boxPos] = this.held;
-      this.boxPos = (this.boxPos + 1) % L;
-      const g = this.boxSum / L;
-      if (g < this.minGain) this.minGain = g;
-      // delay line: output sample from L-1 samples ago
-      const rd = (this.dPos + 1) % L;
-      for (let c = 0; c < chs.length; c++) {
-        const d = this.delay[c];
-        d[this.dPos] = chs[c][i];
-        chs[c][i] = d[L === 1 ? this.dPos : rd] * g;
+      const a = x0[i] * gain;
+      const b = stereo ? x1![i] * gain : 0;
+      const req = Math.min(1, ceil / (Math.max(Math.abs(a), Math.abs(b)) + 1e-30));
+      // window = tail of the previous block (suffix) + head of the current block (run)
+      cur[bPos] = req;
+      run = Math.min(run, req);
+      const winMin = Math.min(run, suffix[bPos + 1]);
+      if (++bPos === L) {
+        let m = Infinity;
+        for (let k = L - 1; k >= 0; k--) { m = Math.min(m, cur[k]); suffix[k] = m; }
+        bPos = 0;
+        run = Infinity;
       }
-      this.dPos = (this.dPos + 1) % L;
-      this.n++;
+      held = Math.min(winMin, 1 - (1 - held) * rel); // release, never above the window minimum
+      boxSum += held - box[boxPos];
+      box[boxPos] = held;
+      if (++boxPos === L) boxPos = 0;
+      const g = boxSum * invL;
+      minG = Math.min(minG, g);
+      // delay line: output the sample from L-1 samples ago
+      const rd = dPos + 1 === L ? 0 : dPos + 1;
+      const rp = L === 1 ? dPos : rd;
+      d0[dPos] = a;
+      y0[i] = d0[rp] * g;
+      if (stereo) { d1![dPos] = b; y1![i] = d1![rp] * g; }
+      dPos = rd;
     }
+    this.run = run; this.bPos = bPos; this.held = held;
+    this.boxSum = boxSum; this.boxPos = boxPos; this.dPos = dPos; this.minGain = minG;
   }
 
   /** Pushes zeros through to release the delayed tail; returns the tail samples. */

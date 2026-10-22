@@ -1,5 +1,5 @@
 // Integrated loudness after ITU-R BS.1770-4 / EBU R128 and true-peak estimation.
-import { Biquad, type BiquadCoeffs } from './dsp';
+import type { BiquadCoeffs } from './dsp';
 
 /** K-weighting filter coefficients for any sample rate (derivation as in libebur128). */
 export function kWeighting(sr: number): [BiquadCoeffs, BiquadCoeffs] {
@@ -21,54 +21,80 @@ export function kWeighting(sr: number): [BiquadCoeffs, BiquadCoeffs] {
   return [shelf, hp];
 }
 
+/** Gated integrated loudness (LUFS) from 100 ms mean-square sub-blocks (BS.1770: 400 ms blocks, 75 % overlap). */
+export function integrateSubBlocks(sb: ArrayLike<number>, from = 0, to = sb.length): number {
+  const lk = (z: number) => -0.691 + 10 * Math.log10(z);
+  let sumAbs = 0, nAbs = 0;
+  const blocks: number[] = [];
+  for (let i = from; i + 4 <= to; i++) {
+    const z = (sb[i] + sb[i + 1] + sb[i + 2] + sb[i + 3]) / 4;
+    if (lk(z) > -70) { blocks.push(z); sumAbs += z; nAbs++; }
+  }
+  if (!nAbs) return -Infinity;
+  const relThr = lk(sumAbs / nAbs) - 10;
+  let sum = 0, n = 0;
+  for (const z of blocks) if (lk(z) > relThr) { sum += z; n++; }
+  return lk(sum / n);
+}
+
 export class LoudnessMeter {
-  private shelf: Biquad;
-  private hp: Biquad;
+  private c: Float64Array; // shelf b0 b1 b2 a1 a2, high-pass b0 b1 b2 a1 a2
+  private z: Float64Array; // 4 states per channel
   private sub: number; // samples per 100 ms sub-block
   private acc = 0;
   private accN = 0;
-  private subBlocks: number[] = [];
-  private tmp = new Float32Array(0);
+  private blocks = new Float32Array(1024);
+  private nBlocks = 0;
   samplePeak = 0;
 
   constructor(sr: number, private channels: number) {
     const [s, h] = kWeighting(sr);
-    this.shelf = new Biquad(s, channels);
-    this.hp = new Biquad(h, channels);
+    this.c = Float64Array.of(s.b0, s.b1, s.b2, s.a1, s.a2, h.b0, h.b1, h.b2, h.a1, h.a2);
+    this.z = new Float64Array(4 * channels);
     this.sub = Math.round(sr / 10);
   }
 
   push(chs: Float32Array[]): void {
-    const n = chs[0].length;
-    if (this.tmp.length < n * this.channels) this.tmp = new Float32Array(n * this.channels);
-    const filtered: Float32Array[] = [];
-    for (let c = 0; c < this.channels; c++) {
-      const x = chs[c];
-      for (let i = 0; i < n; i++) { const a = Math.abs(x[i]); if (a > this.samplePeak) this.samplePeak = a; }
-      const out = this.tmp.subarray(c * n, (c + 1) * n);
-      this.shelf.process(x, c, out);
-      this.hp.process(out, c);
-      filtered.push(out);
-    }
+    const [sb0, sb1, sb2, sa1, sa2, hb0, hb1, hb2, ha1, ha2] = this.c;
+    const z = this.z, nch = Math.min(this.channels, chs.length), n = chs[0].length, sub = this.sub;
+    const x0 = chs[0], x1 = nch > 1 ? chs[1] : null;
+    let a0 = z[0], a1 = z[1], a2 = z[2], a3 = z[3];
+    let b0 = 0, b1 = 0, b2 = 0, b3 = 0;
+    if (x1) { b0 = z[4]; b1 = z[5]; b2 = z[6]; b3 = z[7]; }
+    let acc = this.acc, accN = this.accN, peak = this.samplePeak;
     for (let i = 0; i < n; i++) {
-      let s = 0;
-      for (let c = 0; c < this.channels; c++) s += filtered[c][i] * filtered[c][i];
-      this.acc += s;
-      if (++this.accN === this.sub) { this.subBlocks.push(this.acc / this.sub); this.acc = 0; this.accN = 0; }
+      // channel 0: shelf then high-pass (transposed direct form II)
+      let v = x0[i];
+      let av = v < 0 ? -v : v;
+      if (av > peak) peak = av;
+      let y = sb0 * v + a0; a0 = sb1 * v - sa1 * y + a1; a1 = sb2 * v - sa2 * y;
+      let w = hb0 * y + a2; a2 = hb1 * y - ha1 * w + a3; a3 = hb2 * y - ha2 * w;
+      let e = w * w;
+      if (x1) {
+        v = x1[i];
+        av = v < 0 ? -v : v;
+        if (av > peak) peak = av;
+        y = sb0 * v + b0; b0 = sb1 * v - sa1 * y + b1; b1 = sb2 * v - sa2 * y;
+        w = hb0 * y + b2; b2 = hb1 * y - ha1 * w + b3; b3 = hb2 * y - ha2 * w;
+        e += w * w;
+      }
+      acc += e;
+      if (++accN === sub) {
+        if (this.nBlocks === this.blocks.length) { const nb = new Float32Array(this.blocks.length * 2); nb.set(this.blocks); this.blocks = nb; }
+        this.blocks[this.nBlocks++] = acc / sub;
+        acc = 0; accN = 0;
+      }
     }
+    z[0] = a0; z[1] = a1; z[2] = a2; z[3] = a3;
+    if (x1) { z[4] = b0; z[5] = b1; z[6] = b2; z[7] = b3; }
+    this.acc = acc; this.accN = accN; this.samplePeak = peak;
   }
 
+  /** 100 ms mean-square sub-blocks (K-weighted, summed over channels). */
+  subBlocks(): Float32Array { return this.blocks.slice(0, this.nBlocks); }
+
   /** Gated integrated loudness in LUFS (-Infinity for silence). */
-  integrated(): number {
-    const sb = this.subBlocks, blocks: number[] = [];
-    for (let i = 0; i + 4 <= sb.length; i++) blocks.push((sb[i] + sb[i + 1] + sb[i + 2] + sb[i + 3]) / 4);
-    const lk = (z: number) => -0.691 + 10 * Math.log10(z);
-    const abs = blocks.filter(z => lk(z) > -70);
-    if (!abs.length) return -Infinity;
-    const relThr = lk(abs.reduce((a, b) => a + b, 0) / abs.length) - 10;
-    const rel = abs.filter(z => lk(z) > relThr);
-    return lk(rel.reduce((a, b) => a + b, 0) / rel.length);
-  }
+  integrated(): number { return integrateSubBlocks(this.blocks, 0, this.nBlocks); }
 }
 
 /**

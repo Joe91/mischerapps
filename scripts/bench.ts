@@ -75,7 +75,7 @@ async function main() {
       console.log(basename(path), 'noise', a.result.noiseFloor.toFixed(1), 'silThr', a.result.silenceThr.toFixed(1), 'thr', a.result.threshold.toFixed(2));
       for (const s of a.result.segments) if (s.end - s.start > 4) console.log(`  ${s.kind.padEnd(7)} ${fmt(s.start)}–${fmt(s.end)}`);
     }
-    if (doRender && c) await renderCheck(src, a.info, c.start, c.end, path);
+    if (doRender && c) await renderCheck(src, a, c.start, c.end, path);
     await src.close();
   }
   const head = ['Datei', 'Länge', 'Vorschlag', 'Soll', 'ΔStart', 'ΔEnde', 'Konf.', 'Alternativen', 'Zeit'];
@@ -103,10 +103,13 @@ async function writeCsv(path: string, w: WindowFeatures, score: Float32Array, tr
   console.log('CSV:', path);
 }
 
-async function renderCheck(src: ByteSource, info: Awaited<ReturnType<typeof analyzeSource>>['info'], start: number, end: number, path: string) {
+async function renderCheck(src: ByteSource, a: Awaited<ReturnType<typeof analyzeSource>>, start: number, end: number, path: string) {
+  const info = a.info;
   const o: ProcessOptions = { start, end, channels: 1, targetLufs: -19, truePeakDb: -1.5, highpass: true, compressor: false, fadeIn: 0.5, fadeOut: 1.5, maxGainDb: 20 };
   const t0 = performance.now();
-  const m = await measure(src, info, o);
+  const t1 = performance.now();
+  const m = await measure(src, info, o, { kbps: 64 }, { loudness: a.loudness });
+  const tMeasure = (performance.now() - t1) / 1000;
   const r = await render(src, info, o, m, { kbps: 64 });
   const out = path + '.predigt.mp3';
   await writeFile(out, r.mp3);
@@ -115,7 +118,7 @@ async function renderCheck(src: ByteSource, info: Awaited<ReturnType<typeof anal
   const TP = /Peak:\s+(-?[\d.]+) dBFS/.exec(ff.slice(ff.lastIndexOf('Summary')))?.[1];
   console.log(`  Render ${basename(out)}: gemessen ${m.inputLufs.toFixed(1)} LUFS, Gain ${m.gainDb.toFixed(1)} dB → ` +
     `${r.outputLufs.toFixed(2)} LUFS (Prognose ${m.predictedLufs.toFixed(2)}, Limiter −${r.limiterReductionDb.toFixed(1)} dB), TP ${r.truePeakDb.toFixed(2)} dBTP, ${(r.mp3.length / 1e6).toFixed(1)} MB, ` +
-    `${((performance.now() - t0) / 1000).toFixed(1)} s | ffmpeg (decodiertes MP3): ${I ?? '?'} LUFS, TP ${TP ?? '?'} dBTP`);
+    `Messung ${tMeasure.toFixed(1)} s + Export ${((performance.now() - t0) / 1000 - tMeasure).toFixed(1)} s | ffmpeg (decodiertes MP3): ${I ?? '?'} LUFS, TP ${TP ?? '?'} dBTP`);
 }
 
 main()

@@ -1,12 +1,12 @@
 // One worker for all heavy passes; it keeps the loaded file and its frame index between calls.
 import { blobSource, type ByteSource } from './decode';
 import type { Mp3Info } from './mp3-index';
-import { analyzeSource, measure, render, tagMp3, type EncodeOptions, type Measurement, type ProcessOptions, type Tags } from './pipeline';
+import { analyzeSource, measure, render, tagMp3, type EncodeOptions, type MeasureHints, type Measurement, type ProcessOptions, type Tags } from './pipeline';
 import type { AnalysisParams } from './analysis';
 
 export type WorkerRequest =
   | { id: number; type: 'analyze'; file: File; params: Partial<AnalysisParams> }
-  | { id: number; type: 'measure'; opts: ProcessOptions }
+  | { id: number; type: 'measure'; opts: ProcessOptions; encode: EncodeOptions }
   | { id: number; type: 'render'; opts: ProcessOptions; measurement: Measurement; encode: EncodeOptions; tags: Tags };
 
 export type WorkerResponse =
@@ -21,6 +21,7 @@ const ctx = self as unknown as {
 
 let src: ByteSource | null = null;
 let info: Mp3Info | null = null;
+let hints: MeasureHints = {};
 
 function loaded() {
   if (!src || !info) throw new Error('Keine Datei geladen.');
@@ -35,14 +36,16 @@ ctx.onmessage = async (e) => {
       case 'analyze': {
         src = blobSource(req.file);
         info = null;
+        hints = {};
         const out = await analyzeSource(src, req.params, progress('analyze'));
         info = out.info;
+        hints = { loudness: out.loudness };
         ctx.postMessage({ id: req.id, type: 'result', data: out }, [out.peaks.buffer]);
         break;
       }
       case 'measure': {
         const l = loaded();
-        const m = await measure(l.src, l.info, req.opts, progress('measure'));
+        const m = await measure(l.src, l.info, req.opts, req.encode, hints, progress('measure'));
         ctx.postMessage({ id: req.id, type: 'result', data: m });
         break;
       }

@@ -1,7 +1,22 @@
 import { createStore } from '../../../packages/settings/store';
 import type { EncodeOptions } from '../../../packages/audio-core/pipeline';
 
-export interface UploadProfile { id: string; name: string; url: string; token: string; }
+export type UploadKind = 'opencloud' | 'nextcloud' | 'http-post';
+
+/**
+ * An upload target. For cloud folders `url` is the public share link and `token` its password;
+ * for 'http-post' (server/upload.php) the script URL and its token.
+ */
+export interface UploadProfile { id: string; name: string; kind?: UploadKind; url: string; token: string; }
+
+export const UPLOAD_KINDS: Record<UploadKind, { label: string; url: string; urlHint: string; secret: string }> = {
+  opencloud: { label: 'Cloud-Ordner (OpenCloud)', url: 'Freigabe-Link', urlHint: 'https://cloud.example.org/s/AbC123', secret: 'Link-Passwort' },
+  nextcloud: { label: 'Cloud-Ordner (Nextcloud)', url: 'Freigabe-Link', urlHint: 'https://cloud.example.org/s/AbC123', secret: 'Link-Passwort' },
+  'http-post': { label: 'Upload-Skript (PHP)', url: 'Upload-URL', urlHint: 'https://example.org/upload.php', secret: 'Token' },
+};
+
+/** Profiles saved before upload kinds existed are PHP-script targets. */
+export const profileKind = (p: UploadProfile): UploadKind => p.kind ?? 'http-post';
 
 export const LOUDNESS_PRESETS = {
   mono19: { label: 'Podcast Mono (Standard) – −19 LUFS, −1,5 dBTP', lufs: -19, tp: -1.5 },
@@ -38,7 +53,7 @@ export interface Settings {
 
 const isLocalHost = () => /^(localhost|127\.|\[::1\]|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)|\.local$/.test(location.hostname);
 
-export const DEV_PROFILE: UploadProfile = { id: 'local-dev', name: 'Lokaler Test-Server (npm run dev)', url: '/api/upload', token: 'dev-token' };
+export const DEV_PROFILE: UploadProfile = { id: 'local-dev', name: 'Lokaler Test-Server (npm run dev)', kind: 'http-post', url: '/api/upload', token: 'dev-token' };
 
 export function defaultSettings(): Settings {
   const local = import.meta.env.DEV || isLocalHost();

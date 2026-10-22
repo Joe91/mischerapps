@@ -1,5 +1,5 @@
 import type { AudioWorkerClient } from '../../../packages/audio-core/client';
-import type { AnalyzeOutput, Measurement, ProcessOptions, RenderResult } from '../../../packages/audio-core/pipeline';
+import type { AnalyzeOutput, EncodeOptions, Measurement, ProcessOptions, RenderResult } from '../../../packages/audio-core/pipeline';
 import { EXPORT_PRESETS, LOUDNESS_PRESETS, type Settings } from './settings';
 import type { Meta } from './naming';
 
@@ -53,5 +53,9 @@ export function processOptions(ctx: Ctx): ProcessOptions {
   };
 }
 
-/** Key over everything that influences the measurement. */
-export const measurementKey = (o: ProcessOptions) => JSON.stringify(o);
+export function encodeOptions(ctx: Ctx): EncodeOptions {
+  return { kbps: EXPORT_PRESETS[ctx.settings.exportPreset].kbps };
+}
+
+/** Key over everything that influences the measurement (the bitrate affects the peak ceiling). */
+export const measurementKey = (o: ProcessOptions, e: EncodeOptions) => JSON.stringify([o, e]);

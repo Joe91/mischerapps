@@ -1,8 +1,8 @@
 import { h, download, toast } from '../../../packages/ui-kit/dom';
 import type { Ctx } from './context';
 import {
-  EXPORT_PRESETS, LOUDNESS_PRESETS, newId, settingsStore, stripTokens,
-  type ExportPresetId, type LoudnessPresetId, type Settings, type UploadProfile,
+  EXPORT_PRESETS, LOUDNESS_PRESETS, UPLOAD_KINDS, newId, profileKind, settingsStore, stripTokens,
+  type ExportPresetId, type LoudnessPresetId, type Settings, type UploadKind, type UploadProfile,
 } from './settings';
 
 /** Settings dialog. Edits a copy; "Speichern" writes it to localStorage. */
@@ -44,10 +44,13 @@ export function openSettings(ctx: Ctx, onSaved?: () => void) {
     const show = h('button', { class: 'btn btn-sm btn-ghost', type: 'button', onclick: () => { token.type = token.type === 'password' ? 'text' : 'password'; } }, '👁');
     const radio = h('input', { type: 'radio', name: 'active-profile', checked: draft.activeProfileId === p.id, title: 'Standard-Ziel' });
     radio.addEventListener('change', () => { draft.activeProfileId = p.id; });
+    const k = UPLOAD_KINDS[profileKind(p)];
+    const kind = select('Art', UPLOAD_KINDS, () => profileKind(p), v => { p.kind = v as UploadKind; renderProfiles(); });
     return h('div', { class: 'profile' },
-      text('Name', () => p.name, v => { p.name = v; }, { placeholder: 'z. B. Gemeinde-Website' }),
-      text('Upload-URL', () => p.url, v => { p.url = v.trim(); }, { placeholder: 'https://example.org/upload.php', type: 'url' }),
-      h('label', null, 'Token', h('div', { class: 'row nowrap' }, token, show)),
+      kind,
+      text('Name', () => p.name, v => { p.name = v; }, { placeholder: 'z. B. Predigten-Ordner' }),
+      text(k.url, () => p.url, v => { p.url = v.trim(); }, { placeholder: k.urlHint, type: 'url' }),
+      h('label', null, k.secret, h('div', { class: 'row nowrap' }, token, show)),
       h('div', { class: 'profile-actions' },
         h('label', { class: 'check', title: 'Als Standard verwenden' }, radio, 'Standard-Ziel'),
         h('button', {
@@ -100,11 +103,12 @@ export function openSettings(ctx: Ctx, onSaved?: () => void) {
 
   const body = h('div', { class: 'dlg-body' },
     h('fieldset', null, h('legend', null, 'Upload-Ziele'),
-      h('p', { class: 'muted small' }, 'URL des Upload-Skripts (server/upload.php) und das dort eingetragene Token. Wird nur in diesem Browser gespeichert.'),
+      h('p', { class: 'muted small' }, 'Cloud-Ordner: In OpenCloud bzw. Nextcloud den Ordner per öffentlichem Link mit Upload-Recht teilen ' +
+        '(„Hochladen“, „Bearbeiten“ oder „Nur hochladen“) und Link + Passwort hier eintragen. Wird nur in diesem Browser gespeichert.'),
       profileList,
       h('button', {
         class: 'btn btn-sm', type: 'button', onclick: () => {
-          const p = { id: newId(), name: '', url: '', token: '' };
+          const p: UploadProfile = { id: newId(), name: '', kind: 'opencloud', url: '', token: '' };
           draft.profiles.push(p);
           if (!draft.activeProfileId) draft.activeProfileId = p.id;
           renderProfiles();

@@ -1,13 +1,13 @@
 import { h, fmtDb, fmtNum, progressBar } from '../../../../packages/ui-kit/dom';
-import { processOptions, measurementKey, type Ctx, type Step } from '../context';
+import { processOptions, encodeOptions, measurementKey, type Ctx, type Step } from '../context';
 import { EXPORT_PRESETS, LOUDNESS_PRESETS, type ExportPresetId, type LoudnessPresetId } from '../settings';
 
 /** Runs (or reuses) the loudness measurement for the current options. */
 export async function ensureMeasurement(ctx: Ctx, onProgress: (p: number) => void) {
-  const o = processOptions(ctx);
-  const key = measurementKey(o);
+  const o = processOptions(ctx), e = encodeOptions(ctx);
+  const key = measurementKey(o, e);
   if (ctx.state.measurement && ctx.state.measurementKey === key) return ctx.state.measurement;
-  const m = await ctx.worker.measure(o, onProgress);
+  const m = await ctx.worker.measure(o, e, onProgress);
   ctx.state.measurement = m;
   ctx.state.measurementKey = key;
   return m;
