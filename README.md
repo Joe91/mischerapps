@@ -175,15 +175,21 @@ Die API (alle unter `/api`, Anmeldung per Cookie): `POST login` / `logout`, `GET
 3. **Export** – Titel, Prediger, Datum, Bibelstelle und Dateiname eintragen (Schema `predigt-eag-{jjmmdd}`,
    z. B. `predigt-eag-260712.mp3`). Lautheit und Klang werden automatisch nach den Voreinstellungen des Admins
    angepasst (Standard: −19 LUFS, Hochpass 80 Hz, sanfte Kompression 2:1, „Sprache hoch“ = Mono 96 kbps,
-   0,5 s Ausblenden – die Predigt endet meist mit „Amen“);
+   0,5 s Ausblenden – die Predigt endet meist mit „Amen“; Hall & Rauschen reduzieren ist wählbar);
    Messung und MP3-Kodierung laufen schon im Hintergrund, während die Angaben ausgefüllt werden – „MP3 exportieren“
    schreibt dann nur noch die Tags (Titel, Prediger …) hinein und ist sofort fertig. **⚙ Erweitert** zeigt
-   Messwerte und erlaubt, Zielwert, Format, Ein-/Ausblenden, Hochpass und Kompression für diese eine Aufnahme
+   Messwerte und erlaubt, Zielwert, Format, Ein-/Ausblenden, Hochpass, Kompression und Hall-Reduzierung für diese eine Aufnahme
    zu ändern (die Voreinstellungen bleiben unverändert; Schließen stellt sie wieder her).
    Technik: Messung nach EBU R128 (BS.1770), Look-ahead-Limiter; ein einziger Dekodier-Durchlauf
    (die Eingangslautheit ist aus der Analyse bekannt, der Limiter läuft parallel mit drei Verstärkungen,
    die passende wird interpoliert). MP3 per LAME/WASM (CBR) mit ID3-Tags; die angezeigte Lautheit wird am
    fertigen MP3 gemessen.
+   **Hall & Rauschen reduzieren** (Standard aus): KI-Filter [DeepFilterNet3](https://github.com/Rikorose/DeepFilterNet)
+   (MIT/Apache-2.0) als WebAssembly im Browser, nichts zu installieren. Senkt Nachhall und Hintergrundrauschen
+   um höchstens 12 dB, so bleibt es natürlich. Läuft etwa 7× schneller als Echtzeit (30 min Predigt ≈ 4 min auf
+   einem Desktop-PC, ältere Laptops langsamer) und braucht einmalig ~11 MB Download sowie ~250 MB Arbeitsspeicher
+   pro 30 min (Mono; Stereo etwa doppelt). Das Ergebnis wird für Messung und Kodierung wiederverwendet; ändern sich nur Lautheit
+   oder Kompression, wird nicht neu gefiltert.
 4. **Upload** – auf das NAS (Ordner `predigten` im Datenverzeichnis), mit Fortschritt; alternativ Herunterladen.
    Vorhandene Dateien werden nie überschrieben. Der Admin kann zusätzlich einen Cloud-Ordner als Ziel eintragen.
 
@@ -216,6 +222,7 @@ Siehe [testdata/README.md](testdata/README.md). Kurz:
 npm run bench -- pfad/zur/aufnahme.mp3    # Vorschlag für einzelne Dateien
 npm run bench                              # alle Dateien aus testdata/markers.json mit Abweichungstabelle
 npm run bench -- --csv --render            # + Merkmale als CSV, + Export und LUFS-Vergleich mit ffmpeg
+npm run bench -- datei.mp3 --render --denoise  # Export mit Hall-/Rauschreduzierung (Zeitmessung)
 ```
 
 `python3 scripts/make-synthetic.py` erzeugt eine synthetische Testaufnahme (espeak-ng + Orgel-Synthese),
@@ -228,6 +235,8 @@ index.html, src/home.ts      Startseite mit Kacheln aus apps.json
 apps/predigt-schnitt/        Predigt-Schnitt (Schritte unter src/steps/)
 apps/termine/                Termine (src/model.ts: Datenmodell, src/xlsx.ts: Excel-Tabelle, src/api.ts: Zugriff auf den Server)
 packages/audio-core/         Decoder, Frame-Index, Merkmale, Erkennung, Lautheit, DSP, Pipeline, Worker
+packages/denoise/            Hall-/Rauschreduzierung: df3.wasm (DeepFilterNet3 mit Modell) und Wrapper;
+                             wasm/ ist der Rust-Quelltext, neu bauen mit wasm/build.sh (nur nach Änderungen nötig)
 packages/upload/             Upload auf den Server und in Cloud-Ordner
 packages/settings/           localStorage-Store mit JSON-Export/-Import, gemeinsame Einstellungen vom Server
 packages/auth/               Anmeldung am Server (Rollen admin / mischer)

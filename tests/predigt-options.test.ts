@@ -6,13 +6,14 @@ const ctxWith = (overrides: Record<string, unknown> = {}, settings = defaultSett
   ({ settings, state: { start: 10, end: 1800, overrides } }) as unknown as Ctx;
 
 describe('processing defaults', () => {
-  it('start with Sprache hoch, high-pass and compression', () => {
+  it('start with Sprache hoch, high-pass and compression, without denoising', () => {
     const s = defaultSettings();
     expect(s.exportPreset).toBe('speech96');
     expect(s.highpass).toBe(true);
     expect(s.compressor).toBe(true);
+    expect(s.denoise).toBe(false);
     const o = processOptions(ctxWith());
-    expect(o).toMatchObject({ channels: 1, targetLufs: -19, highpass: true, compressor: true, start: 10, end: 1800 });
+    expect(o).toMatchObject({ channels: 1, targetLufs: -19, highpass: true, compressor: true, denoise: false, start: 10, end: 1800 });
     expect(encodeOptions(ctxWith())).toEqual({ kbps: 96 });
   });
 

@@ -1,11 +1,13 @@
 // Environment-independent processing passes, shared by the Web Worker and the Node scripts.
 import { createMp3Encoder } from 'wasm-media-encoders';
 import { Mp3Indexer, type Mp3Info } from './mp3-index';
-import { createDecoder, decodeRange, downmix, CHUNK_BYTES, type ByteSource } from './decode';
+import { createDecoder, decodeRange, downmix, CHUNK_BYTES, type BlockFn, type ByteSource } from './decode';
 import { FeatureExtractor, PeakBuilder, type Features } from './features';
 import { analyze, type AnalysisParams, type AnalysisResult } from './analysis';
 import { LoudnessMeter, TruePeakMeter, integrateSubBlocks } from './loudness';
-import { Biquad, Compressor, Limiter, dbToLin, fadeGain, linToDb, rbj } from './dsp';
+import { Biquad, Compressor, Limiter, Resampler, dbToLin, fadeGain, linToDb, rbj } from './dsp';
+import { PcmStore } from './pcm-store';
+import { DENOISE_RATE, Denoiser, loadDenoiser } from '../denoise/denoise';
 
 export const PEAKS_PER_SEC = 50;
 
@@ -76,6 +78,8 @@ export interface ProcessOptions {
   truePeakDb: number;
   highpass: boolean;
   compressor: boolean;
+  /** room reverb and noise reduction (DeepFilterNet); the passes then read from denoiseRange() */
+  denoise: boolean;
   fadeIn: number;
   fadeOut: number;
   maxGainDb: number;
@@ -101,6 +105,55 @@ export interface Measurement {
 function toChannels(chs: Float32Array[], n: 1 | 2): Float32Array[] {
   if (n === 1) return [chs.length === 1 ? chs[0] : downmix(chs)];
   return chs.length === 2 ? chs : [chs[0], chs[0].slice()];
+}
+
+/** The cut range as the passes read it: decoded from the MP3, or a processed copy. */
+export interface RangeReader {
+  sampleRate: number;
+  read(onBlock: BlockFn, onProgress?: (p: number) => void): Promise<void>;
+}
+
+export const mp3Reader = (src: ByteSource, info: Mp3Info, start: number, end: number): RangeReader => ({
+  sampleRate: info.sampleRate,
+  read: (onBlock, onProgress) => decodeRange(src, info, start, end, onBlock, onProgress),
+});
+
+/** What the denoised copy depends on: other options can change without denoising again. */
+export const denoiseKey = (o: Pick<ProcessOptions, 'start' | 'end' | 'channels'>) => JSON.stringify([o.start, o.end, o.channels]);
+
+/**
+ * Pass 1b (optional): room reverb and noise reduction of the cut range, at 48 kHz. Takes minutes
+ * (≈ 7× real time on a desktop CPU), so it runs once and is kept in memory for the following passes.
+ */
+export async function denoiseRange(src: ByteSource, info: Mp3Info, o: Pick<ProcessOptions, 'start' | 'end' | 'channels'>,
+  onProgress?: (p: number) => void): Promise<RangeReader> {
+  const module = await loadDenoiser();
+  const nch = o.channels;
+  const dfs = await Promise.all(Array.from({ length: nch }, () => Denoiser.create(module)));
+  const rs = info.sampleRate === DENOISE_RATE ? null : new Resampler(info.sampleRate, DENOISE_RATE, nch);
+  const store = new PcmStore(nch, DENOISE_RATE);
+  const total = Math.max(1, (o.end - o.start) * info.sampleRate);
+  let done = 0;
+  const push = (chs: Float32Array[]) => store.push(chs.map((c, i) => dfs[i].process(c)));
+  try {
+    await decodeRange(src, info, o.start, o.end, async raw => {
+      const chs = toChannels(raw, nch), n = chs[0].length, step = info.sampleRate;
+      // one second at a time: smooth progress, and messages (cancel) get through in between
+      for (let i = 0; i < n; i += step) {
+        const part = chs.map(c => c.subarray(i, i + step));
+        push(rs ? rs.process(part) : part);
+        done += part[0].length;
+        onProgress?.(Math.min(1, done / total));
+        await new Promise(r => setTimeout(r, 0));
+      }
+    });
+    if (rs) push(rs.flush());
+    store.push(dfs.map(d => d.flush()));
+  } finally {
+    dfs.forEach(d => d.free());
+  }
+  store.finish();
+  return { sampleRate: store.sampleRate, read: (onBlock, p) => store.read(onBlock, p) };
 }
 
 function applyGain(chs: Float32Array[], g: number) {
@@ -169,9 +222,9 @@ interface Candidate { gainDb: number; lim: Limiter; meter: LoudnessMeter; buf: F
  * Before that, the loudest moments are encoded as short MP3 excerpts to see how far MP3 coding
  * pushes peaks above the limiter, and the ceiling is lowered accordingly.
  */
-export async function measure(src: ByteSource, info: Mp3Info, o: ProcessOptions, e: EncodeOptions,
+export async function measure(input: RangeReader, o: ProcessOptions, e: EncodeOptions,
   hints: MeasureHints = {}, onProgress?: (p: number) => void): Promise<Measurement> {
-  const sr = info.sampleRate;
+  const sr = input.sampleRate;
   let est = hints.loudness
     ? integrateSubBlocks(hints.loudness, Math.max(0, Math.floor(o.start * 10)), Math.min(hints.loudness.length, Math.ceil(o.end * 10)))
     : NaN;
@@ -181,7 +234,7 @@ export async function measure(src: ByteSource, info: Mp3Info, o: ProcessOptions,
     // no analysis data: measure the input first (one extra pass)
     const m = new LoudnessMeter(sr, o.channels);
     const shared = makeShared({ ...o, compressor: false, fadeIn: 0, fadeOut: 0 }, sr, 0, chs => m.push(chs));
-    await decodeRange(src, info, o.start, o.end, raw => { shared.push(raw); }, p => onProgress?.(p * 0.3));
+    await input.read(raw => { shared.push(raw); }, p => onProgress?.(p * 0.3));
     exactInput = est = m.integrated();
   }
   if (!isFinite(est)) throw new Error('Der gewählte Bereich ist still – keine Lautheit messbar.');
@@ -197,7 +250,7 @@ export async function measure(src: ByteSource, info: Mp3Info, o: ProcessOptions,
     const cands: Candidate[] = gains.map(gainDb => ({
       gainDb, lim: new Limiter(ceilingDb, sr, o.channels), meter: new LoudnessMeter(sr, o.channels), buf: [],
     }));
-    await decodeRange(src, info, o.start, o.end, raw => {
+    await input.read(raw => {
       const chs = shared.push(raw);
       for (const c of cands) {
         if (!c.buf.length || c.buf[0].length < chs[0].length) c.buf = chs.map(x => new Float32Array(x.length));
@@ -299,9 +352,9 @@ export async function measureMp3(mp3: Uint8Array, channels: 1 | 2): Promise<{ lu
 }
 
 /** Pass 3: the same stages as in measure(), encoded to MP3. */
-export async function render(src: ByteSource, info: Mp3Info, o: ProcessOptions, m: Measurement, e: EncodeOptions,
+export async function render(input: RangeReader, o: ProcessOptions, m: Measurement, e: EncodeOptions,
   onProgress?: (p: number) => void): Promise<RenderResult> {
-  const sr = info.sampleRate, nch = o.channels;
+  const sr = input.sampleRate, nch = o.channels;
   const enc = await createMp3Encoder();
   enc.configure({ sampleRate: sr, channels: nch, bitrate: e.kbps, outputSampleRate: e.outputSampleRate ?? 44100 });
   const parts: Uint8Array[] = [];
@@ -319,7 +372,7 @@ export async function render(src: ByteSource, info: Mp3Info, o: ProcessOptions, 
     applyGain(chs, comp);
     emit(enc.encode(chs));
   };
-  await decodeRange(src, info, o.start, o.end, raw => {
+  await input.read(raw => {
     const chs = shared.push(raw);
     lim.process(chs, g);
     out(chs);

@@ -33,6 +33,8 @@ export interface AppState {
   overrides: Partial<Choices>;
   measurement: Measurement | null;
   measurementKey: string;
+  /** denoiseKey() of the denoised copy the worker holds ('' = none) */
+  denoisedKey: string;
   prepared: Prepared | null;
   rendered: Rendered | null;
   uploadedAs: string | null;
@@ -70,7 +72,7 @@ export function processOptions(ctx: Ctx): ProcessOptions {
   const c = choices(ctx), lp = LOUDNESS_PRESETS[c.loudnessPreset], ep = EXPORT_PRESETS[c.exportPreset];
   return {
     start: ctx.state.start, end: ctx.state.end, channels: ep.channels,
-    targetLufs: lp.lufs, truePeakDb: lp.tp, highpass: c.highpass, compressor: c.compressor,
+    targetLufs: lp.lufs, truePeakDb: lp.tp, highpass: c.highpass, compressor: c.compressor, denoise: c.denoise,
     fadeIn: c.fadeIn, fadeOut: c.fadeOut, maxGainDb: ctx.settings.maxGainDb,
   };
 }

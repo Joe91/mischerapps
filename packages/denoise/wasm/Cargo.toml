@@ -1,0 +1,22 @@
+[package]
+name = "df3-wasm"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# DeepFilterNet3 (MIT/Apache-2.0) with its model compiled in; pinned to the commit the build was checked with
+deep_filter = { git = "https://github.com/Rikorose/DeepFilterNet", rev = "d375b2d8309e0935d165700c91da9de862a99c31", default-features = false, features = ["tract", "default-model"] }
+ndarray = "0.15"
+# only the ONNX random operators use it (not in the model); "custom" avoids the JS glue of the "js" feature
+getrandom = { version = "0.2", features = ["custom"] }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true

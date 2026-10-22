@@ -1,5 +1,5 @@
 import { h, fmtDb, fmtNum, progressBar } from '../../../../packages/ui-kit/dom';
-import type { Measurement } from '../../../../packages/audio-core/pipeline';
+import { denoiseKey, type Measurement, type ProcessOptions } from '../../../../packages/audio-core/pipeline';
 import { choices, processOptions, encodeOptions, measurementKey, type Ctx, type Prepared } from '../context';
 import { EXPORT_PRESETS, LOUDNESS_PRESETS, type Choices, type ExportPresetId, type LoudnessPresetId } from '../settings';
 
@@ -7,24 +7,35 @@ type Progress = (p: number, label: string) => void;
 
 const currentKey = (ctx: Ctx) => measurementKey(processOptions(ctx), encodeOptions(ctx));
 
+const outdated = () => new Error('Die Einstellungen wurden inzwischen geändert – bitte erneut exportieren.');
+
+/** Stops waiting for `p` when `signal` aborts (the work behind `p` goes on). */
+function abortable<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    if (signal.aborted) { reject(signal.reason); return; }
+    signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+    p.then(resolve, reject);
+  });
+}
+
 /**
  * Runs jobs one after another. A caller asking for the key that is already running joins it (and its
- * progress); a queued job whose options are outdated by the time it would start is dropped.
+ * progress). A new key aborts the running job, so its successor does not wait for outdated work; a
+ * queued job whose options are outdated by the time it would start is dropped.
  */
 function serialRunner<T>() {
-  let job: { key: string; analysis: unknown; promise: Promise<T>; listeners: Set<Progress> } | null = null;
+  let job: { key: string; analysis: unknown; promise: Promise<T>; listeners: Set<Progress>; abort: AbortController } | null = null;
   let tail: Promise<unknown> = Promise.resolve();
-  return (ctx: Ctx, key: string, onProgress: Progress, start: (progress: Progress) => Promise<T>): Promise<T> => {
+  return (ctx: Ctx, key: string, onProgress: Progress, start: (progress: Progress, signal: AbortSignal) => Promise<T>): Promise<T> => {
     const analysis = ctx.state.analysis;
     if (job && job.key === key && job.analysis === analysis) { job.listeners.add(onProgress); return job.promise; }
-    const listeners = new Set([onProgress]);
+    job?.abort.abort(outdated());
+    const listeners = new Set([onProgress]), abort = new AbortController();
     const promise: Promise<T> = tail.then(() => {
-      if (ctx.state.analysis !== analysis || currentKey(ctx) !== key) {
-        throw new Error('Die Einstellungen wurden inzwischen geändert – bitte erneut exportieren.');
-      }
-      return start((p, label) => listeners.forEach(f => f(p, label)));
+      if (ctx.state.analysis !== analysis || currentKey(ctx) !== key) throw outdated();
+      return start((p, label) => listeners.forEach(f => f(p, label)), abort.signal);
     }).finally(() => { if (job?.promise === promise) job = null; });
-    job = { key, analysis, promise, listeners };
+    job = { key, analysis, promise, listeners, abort };
     tail = promise.catch(() => undefined);
     return promise;
   };
@@ -33,13 +44,52 @@ function serialRunner<T>() {
 const measureRunner = serialRunner<Measurement>();
 const prepareRunner = serialRunner<Prepared>();
 
+/**
+ * Denoising the cut range in the worker: minutes (≈ 7× real time), while measuring and encoding
+ * run at 100× and more. It is a job of its own, so an option change that keeps range and channels
+ * (compression, loudness, …) carries on with it instead of starting over.
+ */
+let denoiseJob: { key: string; analysis: unknown; promise: Promise<void>; listeners: Set<(p: number) => void>; abort: AbortController } | null = null;
+
+const DENOISE_LABEL = 'Hall und Rauschen werden reduziert …';
+
+const denoisePending = (ctx: Ctx, o: ProcessOptions) => o.denoise && ctx.state.denoisedKey !== denoiseKey(o);
+
+function ensureDenoised(ctx: Ctx, o: ProcessOptions, onProgress: (p: number) => void): Promise<void> {
+  const key = denoiseKey(o), analysis = ctx.state.analysis;
+  if (ctx.state.denoisedKey === key) return Promise.resolve();
+  if (denoiseJob && denoiseJob.key === key && denoiseJob.analysis === analysis) {
+    denoiseJob.listeners.add(onProgress);
+    return denoiseJob.promise;
+  }
+  denoiseJob?.abort.abort(outdated());
+  ctx.state.denoisedKey = ''; // the worker drops its copy when it starts the new one
+  const listeners = new Set([onProgress]), abort = new AbortController();
+  const promise = ctx.worker.denoise(o, p => listeners.forEach(f => f(p)), abort.signal).then(() => {
+    if (ctx.state.analysis === analysis) ctx.state.denoisedKey = key;
+  }).finally(() => { if (denoiseJob?.promise === promise) denoiseJob = null; });
+  denoiseJob = { key, analysis, promise, listeners, abort };
+  return promise;
+}
+
+/** Stops denoising the current options do not need (switched off, other range), so the worker is free. */
+function dropUnneededDenoising(ctx: Ctx, o: ProcessOptions) {
+  if (denoiseJob && (!o.denoise || denoiseJob.key !== denoiseKey(o) || denoiseJob.analysis !== ctx.state.analysis)) {
+    denoiseJob.abort.abort(outdated());
+    denoiseJob = null;
+  }
+}
+
 /** Gain, compression and limiter settings for the current options (cached per recording and options). */
 export function ensureMeasurement(ctx: Ctx, onProgress: Progress = () => undefined): Promise<Measurement> {
   const o = processOptions(ctx), e = encodeOptions(ctx), key = measurementKey(o, e);
   if (ctx.state.measurement && ctx.state.measurementKey === key) return Promise.resolve(ctx.state.measurement);
-  return measureRunner(ctx, key, onProgress, async progress => {
+  dropUnneededDenoising(ctx, o);
+  return measureRunner(ctx, key, onProgress, async (progress, signal) => {
     const analysis = ctx.state.analysis;
-    const m = await ctx.worker.measure(o, e, p => progress(p, 'Lautheit wird gemessen …'));
+    const share = denoisePending(ctx, o) ? 0.95 : 0;
+    if (o.denoise) await abortable(ensureDenoised(ctx, o, p => progress(p * share, DENOISE_LABEL)), signal);
+    const m = await ctx.worker.measure(o, e, p => progress(share + p * (1 - share), 'Lautheit wird gemessen …'), signal);
     // a recording loaded in the meantime must not inherit this result
     if (ctx.state.analysis === analysis) { ctx.state.measurement = m; ctx.state.measurementKey = key; }
     return m;
@@ -53,13 +103,17 @@ export function ensureMeasurement(ctx: Ctx, onProgress: Progress = () => undefin
 export function ensurePrepared(ctx: Ctx, onProgress: Progress): Promise<Prepared> {
   const o = processOptions(ctx), e = encodeOptions(ctx), key = measurementKey(o, e);
   if (ctx.state.prepared?.key === key) return Promise.resolve(ctx.state.prepared);
-  return prepareRunner(ctx, key, onProgress, async progress => {
+  dropUnneededDenoising(ctx, o);
+  return prepareRunner(ctx, key, onProgress, async (progress, signal) => {
     const analysis = ctx.state.analysis;
-    // measuring takes about 30 % of the time (30 min sermon: 8 s measuring, 18 s encoding + checking)
-    const split = ctx.state.measurement && ctx.state.measurementKey === key ? 0 : 0.3;
-    const m = await ensureMeasurement(ctx, p => progress(p * split, 'Lautheit wird gemessen …'));
+    // denoising takes most of the time; measuring about 30 % of the rest (30 min sermon: 8 s measuring,
+    // 18 s encoding + checking)
+    const measured = !!ctx.state.measurement && ctx.state.measurementKey === key;
+    const dn = denoisePending(ctx, o) ? 0.9 : 0, split = dn + (measured ? 0 : 0.3 * (1 - dn));
+    if (o.denoise) await abortable(ensureDenoised(ctx, o, p => progress(p * dn, DENOISE_LABEL)), signal);
+    const m = await abortable(ensureMeasurement(ctx, (p, label) => progress(dn + p * (split - dn), label)), signal);
     const encode = (label: string) => (p: number) => progress(split + p * (1 - split), label);
-    let r = await ctx.worker.render(o, m, e, encode('MP3 wird erstellt …'));
+    let r = await ctx.worker.render(o, m, e, encode('MP3 wird erstellt …'), signal);
     // MP3 coding can push peaks over the limit, or miss the loudness slightly: correct once.
     const delta = o.targetLufs - r.outputLufs;
     const overshoot = r.truePeakDb - o.truePeakDb;
@@ -71,7 +125,7 @@ export function ensurePrepared(ctx: Ctx, onProgress: Progress): Promise<Prepared
         ...(o.compressor ? { makeupDb: m.makeupDb + d } : { preGainDb: m.preGainDb + d }),
         ceilingDb: m.ceilingDb - Math.max(0, overshoot + 0.2),
       };
-      r = await ctx.worker.render(o, m2, e, encode('Feinkorrektur …'));
+      r = await ctx.worker.render(o, m2, e, encode('Feinkorrektur …'), signal);
     }
     const { mp3, ...stats } = r;
     const prepared = { key, mp3, stats };
@@ -162,7 +216,7 @@ export function createAdvancedPanel(ctx: Ctx, details: HTMLElement, onChange: ()
     });
     return { input, el: h('label', { class: 'inline' }, h('span', null, label), h('span', { class: 'unit' }, input, 's')) };
   };
-  const check = (label: string, hint: string, key: 'highpass' | 'compressor') => {
+  const check = (label: string, hint: string, key: 'highpass' | 'compressor' | 'denoise') => {
     const input = h('input', { type: 'checkbox' });
     input.addEventListener('change', () => set(key, input.checked));
     return { input, el: h('label', { class: 'check-hint' }, input, h('span', null, label), h('small', null, hint)) };
@@ -174,6 +228,7 @@ export function createAdvancedPanel(ctx: Ctx, details: HTMLElement, onChange: ()
   const fi = seconds('Einblenden', 'fadeIn'), fo = seconds('Ausblenden', 'fadeOut');
   const hp = check('Hochpass 80 Hz', 'Entfernt Trittschall, Rumpeln und Brummen – empfohlen für Sprache', 'highpass');
   const comp = check('Sanfte Kompression 2:1', 'Gleicht unterschiedliche Abstände zum Mikrofon aus', 'compressor');
+  const dn = check('Hall & Rauschen reduzieren', 'KI-Filter: weniger Nachhall des Raums und Hintergrundrauschen – dauert einige Minuten', 'denoise');
 
   const el = h('div', { class: 'advanced' },
     h('div', { class: 'advanced-head' },
@@ -183,7 +238,7 @@ export function createAdvancedPanel(ctx: Ctx, details: HTMLElement, onChange: ()
     h('div', { class: 'adv-groups' },
       group('Lautheit & Format', h('label', null, 'Zielwert', lp), h('label', null, 'Format (bestimmt Mono/Stereo)', ep)),
       group('Übergänge', fi.el, fo.el),
-      group('Klang', hp.el, comp.el),
+      group('Klang', hp.el, comp.el, dn.el),
     ),
     details,
   );
@@ -194,7 +249,7 @@ export function createAdvancedPanel(ctx: Ctx, details: HTMLElement, onChange: ()
       const c = choices(ctx);
       lp.value = c.loudnessPreset; ep.value = c.exportPreset;
       fi.input.value = String(c.fadeIn); fo.input.value = String(c.fadeOut);
-      hp.input.checked = c.highpass; comp.input.checked = c.compressor;
+      hp.input.checked = c.highpass; comp.input.checked = c.compressor; dn.input.checked = c.denoise;
     },
   };
 }

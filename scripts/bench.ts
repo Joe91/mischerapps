@@ -4,6 +4,7 @@
 //   npm run bench -- some.mp3 other.mp3   just show suggestions for these files
 //   npm run bench -- --csv                additionally write <file>.windows.csv (features + truth label)
 //   npm run bench -- --render             also normalise/encode the sermon and compare LUFS with ffmpeg
+//   npm run bench -- --render --denoise   … with room reverb/noise reduction (DeepFilterNet)
 //
 // markers.json: [{ "file": "x.mp3", "start": "22:14.3", "end": "41:57.8" }, …]  (seconds or m:ss / h:mm:ss)
 import { open, readFile, writeFile } from 'node:fs/promises';
@@ -11,7 +12,8 @@ import { existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { resolve, basename } from 'node:path';
 import type { ByteSource } from '../packages/audio-core/decode';
-import { analyzeSource, measure, render, type ProcessOptions } from '../packages/audio-core/pipeline';
+import { analyzeSource, denoiseRange, measure, mp3Reader, render, type ProcessOptions } from '../packages/audio-core/pipeline';
+import { loadDenoiser } from '../packages/denoise/denoise';
 import type { WindowFeatures } from '../packages/audio-core/analysis';
 
 const DIR = resolve(import.meta.dirname, '../testdata');
@@ -41,7 +43,8 @@ interface Entry { file: string; start?: string | number; end?: string | number; 
 
 async function main() {
   const args = process.argv.slice(2);
-  const csv = args.includes('--csv'), doRender = args.includes('--render');
+  const csv = args.includes('--csv'), doRender = args.includes('--render'), denoise = args.includes('--denoise');
+  if (denoise) await loadDenoiser(await readFile(resolve(import.meta.dirname, '../packages/denoise/df3.wasm')));
   const files = args.filter(a => !a.startsWith('--'));
   let entries: Entry[];
   if (files.length) entries = files.map(f => ({ file: resolve(f) }));
@@ -75,7 +78,7 @@ async function main() {
       console.log(basename(path), 'noise', a.result.noiseFloor.toFixed(1), 'silThr', a.result.silenceThr.toFixed(1), 'thr', a.result.threshold.toFixed(2));
       for (const s of a.result.segments) if (s.end - s.start > 4) console.log(`  ${s.kind.padEnd(7)} ${fmt(s.start)}–${fmt(s.end)}`);
     }
-    if (doRender && c) await renderCheck(src, a, c.start, c.end, path);
+    if (doRender && c) await renderCheck(src, a, c.start, c.end, path, denoise);
     await src.close();
   }
   const head = ['Datei', 'Länge', 'Vorschlag', 'Soll', 'ΔStart', 'ΔEnde', 'Konf.', 'Alternativen', 'Zeit'];
@@ -103,15 +106,18 @@ async function writeCsv(path: string, w: WindowFeatures, score: Float32Array, tr
   console.log('CSV:', path);
 }
 
-async function renderCheck(src: ByteSource, a: Awaited<ReturnType<typeof analyzeSource>>, start: number, end: number, path: string) {
+async function renderCheck(src: ByteSource, a: Awaited<ReturnType<typeof analyzeSource>>, start: number, end: number, path: string,
+  denoise: boolean) {
   const info = a.info;
-  const o: ProcessOptions = { start, end, channels: 1, targetLufs: -19, truePeakDb: -1.5, highpass: true, compressor: false, fadeIn: 0.5, fadeOut: 1.5, maxGainDb: 20 };
+  const o: ProcessOptions = { start, end, channels: 1, targetLufs: -19, truePeakDb: -1.5, highpass: true, compressor: false, denoise, fadeIn: 0.5, fadeOut: 1.5, maxGainDb: 20 };
   const t0 = performance.now();
+  const input = denoise ? await denoiseRange(src, info, o) : mp3Reader(src, info, start, end);
+  if (denoise) console.log(`  Hall/Rauschen reduziert: ${((performance.now() - t0) / 1000).toFixed(1)} s für ${fmt(end - start)}`);
   const t1 = performance.now();
-  const m = await measure(src, info, o, { kbps: 64 }, { loudness: a.loudness });
+  const m = await measure(input, o, { kbps: 64 }, { loudness: a.loudness });
   const tMeasure = (performance.now() - t1) / 1000;
-  const r = await render(src, info, o, m, { kbps: 64 });
-  const out = path + '.predigt.mp3';
+  const r = await render(input, o, m, { kbps: 64 });
+  const out = path + (denoise ? '.predigt-dn.mp3' : '.predigt.mp3');
   await writeFile(out, r.mp3);
   const ff = spawnSync('ffmpeg', ['-hide_banner', '-nostats', '-i', out, '-af', 'ebur128=peak=true:framelog=quiet', '-f', 'null', '-'], { encoding: 'utf8', maxBuffer: 64 << 20 }).stderr ?? '';
   const I = /I:\s+(-?[\d.]+) LUFS/.exec(ff.slice(ff.lastIndexOf('Summary')))?.[1];

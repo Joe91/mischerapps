@@ -5,7 +5,7 @@ import { LoudnessMeter, TruePeakMeter } from '../packages/audio-core/loudness';
 import { Limiter, dbToLin, fadeGain } from '../packages/audio-core/dsp';
 import { Mp3Indexer } from '../packages/audio-core/mp3-index';
 import { createDecoder, decodeRange, type ByteSource } from '../packages/audio-core/decode';
-import { measure, ENCODER_COMPENSATION_DB } from '../packages/audio-core/pipeline';
+import { measure, mp3Reader, ENCODER_COMPENSATION_DB } from '../packages/audio-core/pipeline';
 import type { Features } from '../packages/audio-core/features';
 
 const sine = (sr: number, sec: number, f: number, dbfs: number) => {
@@ -141,9 +141,9 @@ describe('MP3 index and seeking', async () => {
   });
 
   it('measures and plans gain towards the target', async () => {
-    const m = await measure(src, info, {
+    const m = await measure(mp3Reader(src, info, 2, 18), {
       start: 2, end: 18, channels: 1, targetLufs: -19, truePeakDb: -1.5, highpass: true,
-      compressor: false, fadeIn: 0.5, fadeOut: 1.5, maxGainDb: 20,
+      compressor: false, denoise: false, fadeIn: 0.5, fadeOut: 1.5, maxGainDb: 20,
     }, { kbps: 64 });
     expect(Math.abs(m.predictedLufs + 19)).toBeLessThan(0.3);
   });

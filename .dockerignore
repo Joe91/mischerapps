@@ -10,3 +10,4 @@ data
 config.json
 *.zip
 *.log
+packages/denoise/wasm/target

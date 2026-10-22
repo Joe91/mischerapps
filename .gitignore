@@ -10,3 +10,4 @@ dist-server/
 config.json
 config/
 data/
+packages/denoise/wasm/target/

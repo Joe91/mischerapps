@@ -43,6 +43,7 @@ export interface Settings {
   exportPreset: ExportPresetId;
   highpass: boolean;
   compressor: boolean;
+  denoise: boolean;
   fadeIn: number;
   fadeOut: number;
   maxGainDb: number;
@@ -58,7 +59,7 @@ export interface Settings {
 }
 
 /** The processing options the admin sets as defaults; a recording may override them in the advanced view. */
-export const CHOICE_KEYS = ['loudnessPreset', 'exportPreset', 'highpass', 'compressor', 'fadeIn', 'fadeOut'] as const satisfies readonly (keyof Settings)[];
+export const CHOICE_KEYS = ['loudnessPreset', 'exportPreset', 'highpass', 'compressor', 'denoise', 'fadeIn', 'fadeOut'] as const satisfies readonly (keyof Settings)[];
 export type Choices = Pick<Settings, typeof CHOICE_KEYS[number]>;
 
 export function defaultSettings(): Settings {
@@ -69,6 +70,7 @@ export function defaultSettings(): Settings {
     exportPreset: 'speech96',
     highpass: true,
     compressor: true,
+    denoise: false, // takes minutes (≈ 7× real time); for recordings with much reverb
     fadeIn: 0.5,
     fadeOut: 0.5, // sermons end with "Amen": just enough to avoid a click
     maxGainDb: 20,
@@ -105,7 +107,7 @@ export const settingsStore = createStore<Settings>('audio-tools.predigt-schnitt.
 
 /** Keys the admin sets for everybody; they live on the server (the upload targets stay per browser). */
 export const SHARED_KEYS = [
-  'loudnessPreset', 'exportPreset', 'highpass', 'compressor', 'fadeIn', 'fadeOut', 'maxGainDb', 'namePattern',
+  'loudnessPreset', 'exportPreset', 'highpass', 'compressor', 'denoise', 'fadeIn', 'fadeOut', 'maxGainDb', 'namePattern',
   'congregation', 'preacher', 'titlePrefix', 'coverDataUrl', 'minSermonMin', 'mergeGapSec', 'rev',
 ] as const satisfies readonly (keyof Settings)[];
 

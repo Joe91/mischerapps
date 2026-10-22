@@ -30,10 +30,17 @@ export class AudioWorkerClient {
     };
   }
 
-  private call<T>(req: DistributiveOmit<WorkerRequest, 'id'>, onProgress?: (p: number) => void): Promise<T> {
+  /** Aborting `signal` rejects at once with its reason and stops the work in the worker shortly after. */
+  private call<T>(req: DistributiveOmit<WorkerRequest, 'id'>, onProgress?: (p: number) => void, signal?: AbortSignal): Promise<T> {
     const id = this.nextId++;
     return new Promise<T>((resolve, reject) => {
+      if (signal?.aborted) { reject(signal.reason); return; }
       this.pending.set(id, { resolve: resolve as (v: unknown) => void, reject, onProgress });
+      signal?.addEventListener('abort', () => {
+        if (!this.pending.delete(id)) return;
+        this.worker.postMessage({ type: 'cancel', id: this.nextId++, target: id } satisfies WorkerRequest);
+        reject(signal.reason);
+      }, { once: true });
       this.worker.postMessage({ ...req, id });
     });
   }
@@ -41,12 +48,16 @@ export class AudioWorkerClient {
   analyze(file: File, params: Partial<AnalysisParams>, onProgress?: (p: number) => void) {
     return this.call<AnalyzeOutput>({ type: 'analyze', file, params }, onProgress);
   }
-  measure(opts: ProcessOptions, encode: EncodeOptions, onProgress?: (p: number) => void) {
-    return this.call<Measurement>({ type: 'measure', opts, encode }, onProgress);
+  measure(opts: ProcessOptions, encode: EncodeOptions, onProgress?: (p: number) => void, signal?: AbortSignal) {
+    return this.call<Measurement>({ type: 'measure', opts, encode }, onProgress, signal);
   }
   /** Encodes without tags (see tags.ts), so the file can be prepared before the details are known. */
-  render(opts: ProcessOptions, measurement: Measurement, encode: EncodeOptions, onProgress?: (p: number) => void) {
-    return this.call<RenderResult>({ type: 'render', opts, measurement, encode }, onProgress);
+  render(opts: ProcessOptions, measurement: Measurement, encode: EncodeOptions, onProgress?: (p: number) => void, signal?: AbortSignal) {
+    return this.call<RenderResult>({ type: 'render', opts, measurement, encode }, onProgress, signal);
+  }
+  /** Denoises the cut range (minutes); measure and render then read the denoised copy. */
+  denoise(opts: ProcessOptions, onProgress?: (p: number) => void, signal?: AbortSignal) {
+    return this.call<null>({ type: 'denoise', opts }, onProgress, signal);
   }
 
   /** Aborts all running work by restarting the worker. */

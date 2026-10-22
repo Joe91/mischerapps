@@ -178,6 +178,102 @@ export class Limiter {
   }
 }
 
+/** Modified Bessel function I0 (series), for the Kaiser window. */
+function besselI0(x: number): number {
+  let sum = 1, term = 1;
+  for (let k = 1; k < 50 && term > 1e-12 * sum; k++) { term *= (x / (2 * k)) ** 2; sum += term; }
+  return sum;
+}
+
+/**
+ * Polyphase windowed-sinc resampler for a rational ratio (e.g. 44.1 → 48 kHz: 160/147).
+ * Output sample k lies exactly at input time k·in/out (no delay); call flush() at the end
+ * to get the remaining samples, so the output has ceil(n·out/in) samples in total.
+ */
+export class Resampler {
+  private up: number;
+  private down: number;
+  private taps: Float32Array[];
+  private buf: Float32Array[];
+  /** input index of buf[0] */
+  private base: number;
+  private len: number;
+  private inCount = 0;
+  /** position of the next output sample in input samples × up */
+  private next = 0;
+
+  constructor(inRate: number, outRate: number, channels: number, private half = 16) {
+    const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a);
+    const g = gcd(inRate, outRate);
+    this.up = outRate / g;
+    this.down = inRate / g;
+    // cut-off slightly below the lower Nyquist frequency
+    const fc = 0.95 * Math.min(1, outRate / inRate), beta = 8, i0b = besselI0(beta);
+    this.taps = Array.from({ length: this.up }, (_, p) => {
+      const t = new Float32Array(2 * half);
+      for (let j = 0; j < 2 * half; j++) {
+        const d = p / this.up + half - 1 - j; // distance of tap j from the output position
+        const w = Math.abs(d) >= half ? 0 : besselI0(beta * Math.sqrt(1 - (d / half) ** 2)) / i0b;
+        t[j] = fc * w * (d === 0 ? 1 : Math.sin(Math.PI * fc * d) / (Math.PI * fc * d));
+      }
+      return t;
+    });
+    // half − 1 zeros of history before the first input sample
+    this.base = -(half - 1);
+    this.len = half - 1;
+    this.buf = Array.from({ length: channels }, () => new Float32Array(4096));
+  }
+
+  process(chs: Float32Array[]): Float32Array[] {
+    this.append(chs);
+    this.inCount += chs[0].length;
+    return this.produce(Infinity);
+  }
+
+  flush(): Float32Array[] {
+    this.append(this.buf.map(() => new Float32Array(this.half)));
+    return this.produce(this.inCount * this.up);
+  }
+
+  private append(chs: Float32Array[]) {
+    const n = chs[0].length;
+    if (this.len + n > this.buf[0].length) {
+      const size = Math.max(2 * this.buf[0].length, this.len + n);
+      this.buf = this.buf.map(b => { const nb = new Float32Array(size); nb.set(b.subarray(0, this.len)); return nb; });
+    }
+    this.buf.forEach((b, c) => b.set(chs[c], this.len));
+    this.len += n;
+  }
+
+  /** Output samples whose input window is complete and whose position is before `limit`. */
+  private produce(limit: number): Float32Array[] {
+    const { up, down, half } = this;
+    const last = this.base + this.len - 1; // newest input index available
+    const end = Math.min(limit, (last - half + 1) * up); // positions with n + half ≤ last
+    const count = Math.max(0, Math.ceil((end - this.next) / down));
+    const out = this.buf.map(() => new Float32Array(count));
+    for (let k = 0; k < count; k++) {
+      const pos = this.next + k * down, n = Math.floor(pos / up), t = this.taps[pos - n * up];
+      const i0 = n - half + 1 - this.base;
+      for (let c = 0; c < out.length; c++) {
+        const b = this.buf[c];
+        let s = 0;
+        for (let j = 0; j < t.length; j++) s += t[j] * b[i0 + j];
+        out[c][k] = s;
+      }
+    }
+    this.next += count * down;
+    // keep the history the next output needs
+    const keep = Math.floor(this.next / up) - half + 1 - this.base;
+    if (keep > 0) {
+      for (const b of this.buf) b.copyWithin(0, keep, this.len);
+      this.base += keep;
+      this.len -= keep;
+    }
+    return out;
+  }
+}
+
 /** Raised-cosine fade gain for sample time t (s) inside a clip of the given length. */
 export function fadeGain(t: number, length: number, fadeIn: number, fadeOut: number): number {
   let g = 1;

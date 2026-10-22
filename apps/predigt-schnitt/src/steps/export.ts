@@ -62,7 +62,7 @@ export function createExportStep(ctx: Ctx): Step {
   function showSummary() {
     const c = choices(ctx), lp = LOUDNESS_PRESETS[c.loudnessPreset], ep = EXPORT_PRESETS[c.exportPreset];
     summary.textContent = 'Wird automatisch angepasst: ' + [
-      `Lautheit ${fmtNum(lp.lufs, 0)} LUFS`, c.highpass && 'Hochpass', c.compressor && 'Kompression',
+      `Lautheit ${fmtNum(lp.lufs, 0)} LUFS`, c.highpass && 'Hochpass', c.compressor && 'Kompression', c.denoise && 'Raumklang reduziert',
       `MP3 ${ep.channels === 1 ? 'Mono' : 'Stereo'}, ${ep.kbps} kbps`,
     ].filter(Boolean).join(' · ');
   }

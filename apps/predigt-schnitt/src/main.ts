@@ -21,7 +21,7 @@ function initialState(settings: Settings): AppState {
     meta: { title: settings.titlePrefix, preacher: settings.preacher, date: lastSunday(), scripture: '', album: settings.congregation },
     fileName: '', fileNameEdited: false,
     advanced: false, overrides: {},
-    measurement: null, measurementKey: '', prepared: null, rendered: null, uploadedAs: null,
+    measurement: null, measurementKey: '', denoisedKey: '', prepared: null, rendered: null, uploadedAs: null,
   };
 }
 
