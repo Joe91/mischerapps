@@ -73,7 +73,7 @@ export function defaultSettings(): Settings {
     denoise: true, // ≈ 1 min per 30 min on 6 cores, mostly done in the background during the cut step
     fadeIn: 0.5,
     fadeOut: 0.5, // sermons end with "Amen": just enough to avoid a click
-    maxGainDb: 30, // quiet desk recordings still reach the target; the denoiser keeps the lifted noise down
+    maxGainDb: 55, // desk recordings can be very quiet (−52 LUFS); the denoiser keeps the lifted noise down
     namePattern: 'predigt-eag-{jjmmdd}',
     congregation: '',
     preacher: '',
@@ -86,13 +86,14 @@ export function defaultSettings(): Settings {
 }
 
 /** Raised when changed defaults should replace what browsers and the server saved before. */
-export const SETTINGS_REV = 3;
+export const SETTINGS_REV = 4;
 
 /**
  * Saved values (browser, server, imported file) from an older revision: drops those whose default has
  * changed since, so the new default applies.
  * Rev 2: "Sprache hoch" with compression, fade-out 0.5 s, names predigt-eag-JJMMDD.
  * Rev 3: denoising on, max. gain 30 dB (values still at the old defaults only).
+ * Rev 4: max. gain 55 dB (desk recordings at −52 LUFS).
  */
 export function upgradeStored(stored: unknown): unknown {
   if (!stored || typeof stored !== 'object') return stored;
@@ -109,6 +110,7 @@ export function upgradeStored(stored: unknown): unknown {
     if (values.denoise === false) delete values.denoise;
     if (values.maxGainDb === 20) delete values.maxGainDb;
   }
+  if (rev < 4 && values.maxGainDb === 30) delete values.maxGainDb;
   return { ...values, rev: SETTINGS_REV };
 }
 

@@ -192,7 +192,7 @@ Die API (alle unter `/api`, Anmeldung per Cookie): `POST login` / `logout`, `GET
    Alternativ-Vorschläge, Vorhören, Feinjustieren (Tastatur: Leertaste, S/E, ←/→, Umschalt, P).
 3. **Export** – Titel, Prediger, Datum, Bibelstelle und Dateiname eintragen (Schema `predigt-eag-{jjmmdd}`,
    z. B. `predigt-eag-260712.mp3`). Lautheit und Klang werden automatisch nach den Voreinstellungen des Admins
-   angepasst (Standard: −19 LUFS, höchstens +30 dB Anhebung, Hochpass 80 Hz, sanfte Kompression 2:1, Hall &
+   angepasst (Standard: −19 LUFS, höchstens +55 dB Anhebung, Hochpass 80 Hz, sanfte Kompression 2:1, Hall &
    Rauschen reduzieren, „Sprache hoch“ = Mono 96 kbps, 0,5 s Ausblenden – die Predigt endet meist mit „Amen“);
    Messung und MP3-Kodierung laufen schon im Hintergrund, während die Angaben ausgefüllt werden – „MP3 exportieren“
    schreibt dann nur noch die Tags (Titel, Prediger …) hinein und ist sofort fertig. **⚙ Erweitert** zeigt

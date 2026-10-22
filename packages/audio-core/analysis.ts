@@ -21,8 +21,15 @@ export interface AnalysisParams {
   hiThr: number;
   loThr: number;
   mergeGap: number;
-  /** quiet (non-music) gaps up to this length never split a speech block */
+  /** quiet (non-music) gaps up to this length never split a speech block … */
   quietGap: number;
+  /** … except at its edges: a part shorter than edgePart before/after a pause of at least edgeGap
+   * is something else (reading, prayer before the sermon) */
+  edgeGap: number;
+  edgePart: number;
+  /** and a part shorter than tailPart after a pause of at least tailGap at the end (announcement after the "Amen") */
+  tailGap: number;
+  tailPart: number;
   /** windows this far below the typical speech level count as silence (dB) */
   quietDb: number;
   minSermon: number;
@@ -33,7 +40,7 @@ export interface AnalysisParams {
 
 export const DEFAULT_PARAMS: AnalysisParams = {
   winSec: 3, stepSec: 0.5, medianSec: 5, hiThr: 0.6, loThr: 0.4,
-  mergeGap: 8, quietGap: 20, quietDb: 15, minSermon: 480, snapRange: 3, preRoll: 0.3, postRoll: 0.8,
+  mergeGap: 8, quietGap: 20, edgeGap: 10, edgePart: 180, tailGap: 5, tailPart: 15, quietDb: 15, minSermon: 480, snapRange: 3, preRoll: 0.3, postRoll: 0.8,
 };
 
 /** Per-window features; exported for calibration (scripts/bench.ts --csv). */
@@ -208,6 +215,29 @@ export function mergeSpeech(list: Segment[], gap: number): Segment[] {
   return out;
 }
 
+/**
+ * Cuts off what a long pause separates from the edges of a speech block (pieces in time order):
+ * at the start a reading or prayer before the sermon, at the end a short announcement after it.
+ * Long pauses in the middle stay – a sermon may have a silent moment.
+ */
+export function trimEdges(pieces: Segment[], p: AnalysisParams): Segment[] {
+  let b = pieces;
+  for (let changed = true; changed && b.length > 1;) {
+    changed = false;
+    for (let i = 0; i < b.length - 1; i++) {
+      const part = b[i].end - b[0].start, gap = b[i + 1].start - b[i].end;
+      if (part >= p.edgePart) break;
+      if (gap >= p.edgeGap) { b = b.slice(i + 1); changed = true; break; }
+    }
+    for (let i = b.length - 1; i > 0; i--) {
+      const part = b[b.length - 1].end - b[i].start, gap = b[i].start - b[i - 1].end;
+      if (part >= p.edgePart) break;
+      if (gap >= p.edgeGap || (gap >= p.tailGap && part < p.tailPart)) { b = b.slice(0, i); changed = true; break; }
+    }
+  }
+  return b;
+}
+
 /** Seconds of music within `range` seconds before (dir -1) or after (dir +1) a time. */
 function musicNear(segs: Segment[], t: number, dir: -1 | 1, range = 30): number {
   const a = dir < 0 ? t - range : t, b = dir < 0 ? t : t + range;
@@ -290,17 +320,22 @@ export function analyze(f: Features, duration: number, params: Partial<AnalysisP
   // Only real music breaks a quiet gap – not a few seconds of rustling or coughing.
   const hasMusic = (a: number, b: number) => segments.some(s => s.kind === 'music' && s.end > a && s.start < b
     && s.end - s.start >= 4 && levelOf(s) >= speechDb - 8);
-  const speech: Segment[] = [];
+  const blocks: Segment[][] = [];
   for (const s of segments.filter(x => x.kind === 'speech')) {
-    const last = speech[speech.length - 1];
+    const block = blocks[blocks.length - 1], last = block?.[block.length - 1];
     const gap = last ? s.start - last.end : Infinity;
-    if (last && (gap < p.mergeGap || (gap <= p.quietGap && !hasMusic(last.end, s.start)))) last.end = s.end;
-    else speech.push({ ...s });
+    if (last && (gap < p.mergeGap || (gap <= p.quietGap && !hasMusic(last.end, s.start)))) block.push(s);
+    else blocks.push([s]);
   }
+  // music is looked for next to the whole block: a reading between the music and the sermon is common
+  const speech = blocks.map(b => {
+    const t = trimEdges(b, p);
+    return { start: t[0].start, end: t[t.length - 1].end, blockStart: b[0].start, blockEnd: b[b.length - 1].end };
+  });
   const ranked = speech
     .map(s => {
-      const musicBefore = musicNear(segments, s.start, -1) >= 8;
-      const musicAfter = musicNear(segments, s.end, 1) >= 8;
+      const musicBefore = musicNear(segments, s.blockStart, -1) >= 8;
+      const musicAfter = musicNear(segments, s.blockEnd, 1) >= 8;
       const dur = s.end - s.start;
       return { ...s, dur, musicBefore, musicAfter, score: dur + (musicBefore ? 60 : 0) + (musicAfter ? 60 : 0) };
     })

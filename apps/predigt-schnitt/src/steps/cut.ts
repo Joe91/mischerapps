@@ -161,6 +161,20 @@ export function createCutStep(ctx: Ctx): Step {
     drawOverview();
   });
 
+  /** Ctrl + mouse wheel (or a trackpad pinch) over the waveform zooms it around the pointer instead of the page. */
+  const waveBox = h('div', { class: 'wave-box', title: 'Strg + Mausrad: zoomen' }, waveEl, timelineEl);
+  waveBox.addEventListener('wheel', e => {
+    if (!ws || !e.ctrlKey || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
+    e.preventDefault();
+    const unit = e.deltaMode === 1 ? 33 : e.deltaMode === 2 ? 400 : 1; // lines / pages → pixels
+    const x = e.clientX - waveEl.getBoundingClientRect().left, t = (ws.getScroll() + x) / zoomPx();
+    // one wheel notch (100 px) moves the slider by 6 %, about ×1.5 for a 1-hour recording
+    zoom.value = String(Math.min(1000, Math.max(0, Number(zoom.value) - e.deltaY * unit * 0.6)));
+    const px = zoomPx();
+    ws.zoom(px);
+    ws.setScroll(t * px - x); // the time under the pointer stays in place
+  }, { passive: false });
+
   zoom.addEventListener('input', () => {
     if (!ws) return;
     // keep the playhead in view while playing, otherwise the marker being edited
@@ -273,7 +287,7 @@ export function createCutStep(ctx: Ctx): Step {
     hintEl,
     overview,
     legend,
-    h('div', { class: 'wave-box' }, waveEl, timelineEl),
+    waveBox,
     h('div', { class: 'row transport' },
       playBtn, timeLabel,
       h('button', { class: 'btn btn-sm', type: 'button', onclick: () => ws?.play(ctx.state.start, ctx.state.end) }, '▶ Auswahl abspielen'),
@@ -285,7 +299,7 @@ export function createCutStep(ctx: Ctx): Step {
     altsEl,
     h('p', { class: 'muted small keys' },
       'Tastatur: Leertaste Abspielen/Pause · S / E setzt Start / Ende an die Abspielposition · ← → verschiebt den aktiven Marker um 0,1 s (mit Umschalt 1 s) · P hört den aktiven Marker vor. ',
-      'Der orange Bereich lässt sich im Wellenbild verschieben und an den Rändern ziehen.'),
+      'Der orange Bereich lässt sich im Wellenbild verschieben und an den Rändern ziehen. Strg + Mausrad über dem Wellenbild zoomt.'),
     h('div', { class: 'actions' },
       h('button', { class: 'btn btn-primary', type: 'button', onclick: () => ctx.goto(STEP.export) }, 'Weiter zum Export →')),
   );

@@ -12,9 +12,9 @@ describe('processing defaults', () => {
     expect(s.highpass).toBe(true);
     expect(s.compressor).toBe(true);
     expect(s.denoise).toBe(true);
-    expect(s.maxGainDb).toBe(30);
+    expect(s.maxGainDb).toBe(55);
     const o = processOptions(ctxWith());
-    expect(o).toMatchObject({ channels: 1, targetLufs: -19, highpass: true, compressor: true, denoise: true, maxGainDb: 30, start: 10, end: 1800 });
+    expect(o).toMatchObject({ channels: 1, targetLufs: -19, highpass: true, compressor: true, denoise: true, maxGainDb: 55, start: 10, end: 1800 });
     expect(encodeOptions(ctxWith())).toEqual({ kbps: 96 });
   });
 
@@ -38,7 +38,7 @@ describe('stored settings', () => {
   const before = { exportPreset: 'speech64', compressor: false, highpass: true, fadeOut: 1.5, namePattern: 'predigt_eag_{datum}', preacher: 'Pfr. X' };
 
   it('let the new defaults replace values saved with the old ones', () => {
-    expect(upgradeStored(before)).toEqual({ highpass: true, preacher: 'Pfr. X', rev: 3 });
+    expect(upgradeStored(before)).toEqual({ highpass: true, preacher: 'Pfr. X', rev: 4 });
     expect(upgradeStored({ ...before, namePattern: '{datum}_{titel}', fadeOut: 2 })).toMatchObject({ namePattern: '{datum}_{titel}', fadeOut: 2 });
     const s = settingsStore.importJson(JSON.stringify({ settings: before }));
     expect(s).toMatchObject({ exportPreset: 'speech96', compressor: true, fadeOut: 0.5, namePattern: 'predigt-eag-{jjmmdd}', preacher: 'Pfr. X' });
@@ -46,19 +46,19 @@ describe('stored settings', () => {
 
   it('keep what the admin chose after the update', () => {
     const shared = sharedPart({ ...defaultSettings(), exportPreset: 'speech64', compressor: false });
-    expect(shared.rev).toBe(3);
+    expect(shared.rev).toBe(4);
     expect(upgradeStored(shared)).toMatchObject({ exportPreset: 'speech64', compressor: false });
   });
 
-  it('switch denoising on and raise the max. gain, unless the admin chose otherwise (rev 2 → 3)', () => {
+  it('switch denoising on and raise the max. gain, unless the admin chose otherwise (rev 2/3 → 4)', () => {
     expect(upgradeStored({ rev: 2, denoise: false, maxGainDb: 20, compressor: false, exportPreset: 'speech64' }))
-      .toEqual({ rev: 3, compressor: false, exportPreset: 'speech64' });
-    expect(upgradeStored({ rev: 2, maxGainDb: 25 })).toEqual({ rev: 3, maxGainDb: 25 });
-    expect(settingsStore.importJson(JSON.stringify({ settings: { rev: 2, denoise: false, maxGainDb: 20 } })))
-      .toMatchObject({ denoise: true, maxGainDb: 30 });
+      .toEqual({ rev: 4, compressor: false, exportPreset: 'speech64' });
+    expect(upgradeStored({ rev: 3, maxGainDb: 30, denoise: false })).toEqual({ rev: 4, denoise: false });
+    expect(upgradeStored({ rev: 2, maxGainDb: 25 })).toEqual({ rev: 4, maxGainDb: 25 });
+    expect(settingsStore.importJson(JSON.stringify({ settings: { rev: 3, maxGainDb: 30 } }))).toMatchObject({ maxGainDb: 55 });
   });
 
   it('leave an empty server copy empty apart from the revision', () => {
-    expect(upgradeStored({})).toEqual({ rev: 3 });
+    expect(upgradeStored({})).toEqual({ rev: 4 });
   });
 });

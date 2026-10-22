@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { createMp3Encoder } from 'wasm-media-encoders';
-import { mergeSpeech, snapMarker, otsu, DEFAULT_PARAMS, type Segment } from '../packages/audio-core/analysis';
+import { mergeSpeech, snapMarker, otsu, trimEdges, DEFAULT_PARAMS, type Segment } from '../packages/audio-core/analysis';
 import { LoudnessMeter, TruePeakMeter } from '../packages/audio-core/loudness';
 import { Limiter, dbToLin, fadeGain } from '../packages/audio-core/dsp';
 import { Mp3Indexer } from '../packages/audio-core/mp3-index';
@@ -18,6 +18,22 @@ describe('mergeSpeech', () => {
   it('joins speech separated by short gaps only', () => {
     const s = (start: number, end: number): Segment => ({ start, end, kind: 'speech' });
     expect(mergeSpeech([s(0, 100), s(105, 200), s(220, 300)], 8)).toEqual([s(0, 200), s(220, 300)]);
+  });
+});
+
+describe('trimEdges', () => {
+  const sp = (start: number, end: number): Segment => ({ start, end, kind: 'speech' });
+  const sermon = [sp(730, 900), sp(901, 1500), sp(1502, 2110)];
+
+  it('cuts off a reading before a long pause and an announcement after the Amen', () => {
+    // as in a real recording: 10 s, 15 s pause, 100 s reading, 19 s pause, sermon, 6 s pause, 8 s announcement
+    const b = [sp(584, 594), sp(609, 709), sp(711, 711.5), ...sermon, sp(2116, 2124)];
+    expect(trimEdges(b, DEFAULT_PARAMS)).toEqual(sermon);
+  });
+
+  it('keeps long pauses inside the sermon and a short greeting at its start', () => {
+    const b = [sp(700, 703), sp(709, 900), sp(915, 1500), sp(1530, 2110)];
+    expect(trimEdges(b, DEFAULT_PARAMS)).toEqual(b);
   });
 });
 
