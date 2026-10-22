@@ -1,15 +1,14 @@
-// Local stand-ins for server/upload.php and server/termine.php so both can be tested with
-// `npm run dev` / `npm run preview`. They behave like the PHP scripts (token header, checks, status codes).
+// Local stand-ins for server/upload.php and for a cloud folder (Termine spreadsheet) so both can be tested with
+// `npm run dev` / `npm run preview`. They behave like the real thing (token, checks, status codes).
 // Files land in ./uploads-dev/. Never part of the GitHub Pages build.
 import type { Plugin, Connect } from 'vite';
 import { mkdir, writeFile, access, readFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { resolve } from 'node:path';
-import { applyOp, OpError, type Op, type TermineData } from './apps/termine/src/model';
 
 export const DEV_UPLOAD_TOKEN = 'dev-token';
 const TARGET_DIR = resolve(__dirname, 'uploads-dev');
-const TERMINE_FILE = resolve(TARGET_DIR, 'termine.json');
 const MAX_BYTES = 80 * 1024 * 1024;
 
 function handler(): Connect.NextHandleFunction {
@@ -51,35 +50,44 @@ function handler(): Connect.NextHandleFunction {
   };
 }
 
-function termineHandler(): Connect.NextHandleFunction {
-  let queue = Promise.resolve(); // serializes read-modify-write like flock() in the PHP script
+/** Stand-in for a cloud folder shared as a public link (OpenCloud: /dav/public-files/<token>/, Nextcloud:
+ *  /public.php/dav/files/<token>/): GET / HEAD / PUT of single files with ETag and If-Match / If-None-Match,
+ *  like the real WebDAV servers. The Termine app keeps its spreadsheet here. Token and password: dev-token. */
+function davHandler(): Connect.NextHandleFunction {
+  let queue = Promise.resolve(); // one request at a time, so the ETag check and the write cannot interleave
+  const etagOf = (buf: Buffer) => `"${createHash('sha1').update(buf).digest('hex')}"`;
   return (req, res, next) => {
-    if (!req.url?.startsWith('/api/termine')) return next();
-    const send = (code: number, body: string, json = false) => {
+    const m = /^\/(?:dav\/public-files|public\.php\/dav\/files)\/([^/]+)\/([^/?]+)$/.exec(req.url ?? '');
+    if (!m) return next();
+    const send = (code: number, body: string | Buffer = '', headers: Record<string, string> = {}) => {
       res.statusCode = code;
-      res.setHeader('Content-Type', json ? 'application/json' : 'text/plain; charset=utf-8');
+      for (const [k, v] of Object.entries(headers)) res.setHeader(k, v);
       res.end(body);
     };
-    if (req.method === 'OPTIONS') return send(204, '');
-    if (req.method !== 'GET' && req.method !== 'POST') return send(405, 'method not allowed');
-    if (req.headers['x-termine-token'] !== DEV_UPLOAD_TOKEN) return send(401, 'unauthorized');
+    if (req.method === 'OPTIONS') return send(204);
     queue = queue.then(async () => {
       try {
-        const data: TermineData = await readFile(TERMINE_FILE, 'utf8').then(JSON.parse, () => ({ dates: {} }));
-        if (req.method === 'POST') {
-          let body = '';
-          for await (const chunk of req) body += chunk;
-          let op: Op;
-          try { op = JSON.parse(body); } catch { return send(400, 'bad date'); }
-          applyOp(data, op);
-          data.dates = Object.fromEntries(Object.entries(data.dates).sort(([a], [b]) => a.localeCompare(b)));
-          await mkdir(TARGET_DIR, { recursive: true });
-          await writeFile(TERMINE_FILE, JSON.stringify(data, null, 2));
+        const auth = Buffer.from((req.headers.authorization ?? '').replace(/^Basic /, ''), 'base64').toString();
+        if (m[1] !== DEV_UPLOAD_TOKEN || !/^(public|anonymous):dev-token$/.test(auth)) return send(401, 'unauthorized');
+        const name = decodeURIComponent(m[2]);
+        if (!/^[^\\/:*?"<>|\s][^\\/:*?"<>|]*\.xlsx$/i.test(name)) return send(403, 'only .xlsx files in the dev folder');
+        const file = resolve(TARGET_DIR, name);
+        const current = await readFile(file).catch(() => null);
+        if (req.method === 'GET' || req.method === 'HEAD') {
+          if (!current) return send(404, 'not found');
+          return send(200, req.method === 'GET' ? current : '', { ETag: etagOf(current), 'Content-Type': 'application/octet-stream' });
         }
-        send(200, JSON.stringify(data), true);
+        if (req.method !== 'PUT') return send(405, 'method not allowed');
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(chunk as Buffer);
+        const ifMatch = req.headers['if-match'], ifNone = req.headers['if-none-match'];
+        if ((ifMatch && (!current || ifMatch !== etagOf(current))) || (ifNone === '*' && current)) return send(412, 'precondition failed');
+        await mkdir(TARGET_DIR, { recursive: true });
+        const body = Buffer.concat(chunks);
+        await writeFile(file, body);
+        send(current ? 204 : 201, '', { ETag: etagOf(body) });
       } catch (e) {
-        if (e instanceof OpError) send(400, e.message);
-        else send(500, (e as Error).message);
+        send(500, (e as Error).message);
       }
     });
   };
@@ -88,7 +96,7 @@ function termineHandler(): Connect.NextHandleFunction {
 export function devUploadPlugin(): Plugin {
   return {
     name: 'dev-upload',
-    configureServer(server) { server.middlewares.use(handler()); server.middlewares.use(termineHandler()); },
-    configurePreviewServer(server) { server.middlewares.use(handler()); server.middlewares.use(termineHandler()); },
+    configureServer(server) { server.middlewares.use(handler()); server.middlewares.use(davHandler()); },
+    configurePreviewServer(server) { server.middlewares.use(handler()); server.middlewares.use(davHandler()); },
   };
 }

@@ -26,7 +26,8 @@ npm run dev          # http://localhost:5173 – auch im LAN erreichbar (Tablet-
 
 Im Dev-Server ist ein Test-Upload-Ziel eingebaut (`/api/upload`, Token `dev-token`, Profil
 „Lokaler Test-Server“). Hochgeladene Dateien landen in `uploads-dev/`.
-Ebenso ein Test-Speicher für die Termine-App (`/api/termine`, Token `dev-token`, Daten in `uploads-dev/termine.json`).
+Ebenso ein Test-Cloud-Ordner für die Termine-App (WebDAV-Nachbau unter `/dav/public-files/dev-token/`, Passwort `dev-token`,
+Datei in `uploads-dev/termine.xlsx`).
 
 ```sh
 npm run build        # Produktions-Build nach dist/
@@ -37,7 +38,7 @@ npm test             # Unit-Tests (Vitest)
 ### Server selbst testen
 
 Der „Server“ ist der Vite-Dev-Server mit den eingebauten Test-Endpunkten aus [dev-server.ts](dev-server.ts)
-(Ersatz für `server/upload.php` und `server/termine.php`). Es gibt kein separates Backend zu starten.
+(Ersatz für `server/upload.php` und für einen Cloud-Ordner mit öffentlichem Link). Es gibt kein separates Backend zu starten.
 
 1. **Starten:** `npm install` (einmalig), dann `npm run dev`. Die Ausgabe nennt `Local:` (`http://localhost:5173`)
    und `Network:` (für das Tablet im selben WLAN). Beenden mit `Strg+C`.
@@ -45,7 +46,7 @@ Der „Server“ ist der Vite-Dev-Server mit den eingebauten Test-Endpunkten aus
    mit `npm run dev -- --port 5174` einen zweiten starten.
 2. **Im Browser:** `http://localhost:5173` öffnen, mit `mischer` / `mischer` anmelden. Für den Upload unter
    *Einstellungen → Upload-Ziele* das Profil „Lokaler Test-Server“ wählen (URL `/api/upload`, Token `dev-token`);
-   bei Termine URL `/api/termine` und Token `dev-token`.
+   bei Termine ist im Dev-Server alles schon voreingestellt (Art OpenCloud, Link `http://localhost:5173/s/dev-token`, Passwort `dev-token`).
 3. **Endpunkte per `curl` prüfen** (in einem zweiten Terminal; `B` ggf. an den Port anpassen):
 
    ```sh
@@ -57,23 +58,24 @@ Der „Server“ ist der Vite-Dev-Server mit den eingebauten Test-Endpunkten aus
    curl -i -X POST $B/api/upload -H 'X-Upload-Token: dev-token' -F file=@test.mp3   # 200 {"ok":true,...}
    curl -i -X POST $B/api/upload -H 'X-Upload-Token: dev-token' -F file=@test.mp3   # 409 (gibt es schon)
 
-   # Termine (Header X-Termine-Token, JSON-Operationen "vote" und "update")
-   H='X-Termine-Token: dev-token'
-   curl -X POST $B/api/termine -H "$H" -H 'Content-Type: application/json' \
-        -d '{"action":"vote","date":"2030-01-06","sign":"JD","answer":"yes"}'
-   curl -H "$H" $B/api/termine                                                      # alle Termine als JSON
-   ```
+   # Termine-Tabelle im Test-Cloud-Ordner (WebDAV wie bei OpenCloud: Basic public:dev-token)
+   D=$B/dav/public-files/dev-token/termine.xlsx
+   curl -u public:dev-token -o /dev/null -w '%{http_code}\n' $D                      # 404, solange noch nichts gespeichert ist
+   curl -u public:dev-token -X PUT -H 'If-None-Match: *' --data-binary @tabelle.xlsx $D   # 201; nochmal: 412
+   curl -u public:dev-token -o termine.xlsx $D                                         # Tabelle herunterladen
 
-   Erwartete Statuscodes wie bei den PHP-Skripten: `401` falsches/fehlendes Token, `400` ungültiger Name bzw.
-   Kürzel, `409` Datei existiert schon, `413` zu groß (80 MB), `415` keine MP3, `405` falsche Methode.
-4. **Ergebnis ansehen:** Uploads liegen in `uploads-dev/`, die Termine in `uploads-dev/termine.json`.
+   Erwartete Statuscodes: `401` falsches/fehlendes Token bzw. Passwort, `400` ungültiger Name, `409` Datei existiert schon, `413` zu groß (80 MB), `415` keine MP3, `405` falsche Methode.
+4. **Ergebnis ansehen:** Uploads liegen in `uploads-dev/`, die Termine-Tabelle in `uploads-dev/termine.xlsx` (lässt sich mit Excel/LibreOffice öffnen).
    Zum Zurücksetzen die Dateien dort löschen (der Ordner ist in `.gitignore`).
-5. **Tests:** `npm test` prüft Namensschema, Termine-Datenmodell und Audio-Erkennung (läuft ohne Server).
+5. **Tests:** `npm test` prüft Namensschema, Termine-Datenmodell, xlsx-Tabelle samt Cloud-Zugriff (mit Nachbau eines Cloud-Ordners) und Audio-Erkennung (läuft ohne Server).
    Der Produktions-Build wird mit `npm run build && npm run preview` (Port 4173) auf dieselbe Weise getestet.
 
-Die echten PHP-Skripte laufen nicht im Dev-Server. Wer sie lokal ausprobieren will (PHP muss installiert sein), kann
-`php -S localhost:8000 -t server` verwenden, in den Skripten Token und `TARGET_DIR` setzen und in der App
-`http://localhost:8000/upload.php` bzw. `termine.php` eintragen (nicht getestet; `localhost:5173` steht bereits in `ALLOWED_ORIGINS`).
+Das echte `upload.php` läuft nicht im Dev-Server. Wer es lokal ausprobieren will (PHP muss installiert sein), kann
+`php -S localhost:8000 -t server` verwenden, im Skript Token und `TARGET_DIR` setzen und in der App
+`http://localhost:8000/upload.php` eintragen (nicht getestet; `localhost:5173` steht bereits in `ALLOWED_ORIGINS`).
+
+Eine echte OpenCloud für die Termine (und den Upload) startet `scripts/cloud-testserver.sh` (siehe unten); der Freigabe-Link darf
+für beide Apps derselbe sein.
 
 ## Ablauf in der App
 
@@ -130,16 +132,38 @@ und bereits vorhandene Dateien (409) ab; die App zeigt dafür verständliche Mel
 
 ## Termine einrichten
 
-Die Antworten müssen für alle sichtbar sein, also braucht es einen gemeinsamen Speicher.
-Das übernimmt `server/termine.php` (eine JSON-Datei, gesperrt beim Schreiben, damit gleichzeitige Antworten nicht verloren gehen):
+Die Antworten müssen für alle sichtbar sein, also braucht es einen gemeinsamen Speicher. Dafür dient eine **Excel-Datei
+(`termine.xlsx`) in einem Cloud-Ordner** (OpenCloud oder Nextcloud). Ein eigener Server oder PHP ist nicht nötig; die App
+(GitHub Pages) liest und schreibt die Datei direkt per WebDAV über einen öffentlichen Freigabe-Link.
 
-1. `server/termine.php` auf den Webspace kopieren, darin `TERMINE_TOKEN` (lang, zufällig) und `ALLOWED_ORIGINS` setzen.
-   Die Daten landen in `termine-daten/termine.json` neben dem Skript; das Skript legt dort eine `.htaccess` mit
-   `Require all denied` an (bei nginx den Ordner in der Server-Konfiguration sperren).
-2. In der App unter **⚙ Einstellungen** URL und Token eintragen (an alle Mischer weitergeben).
-3. Jede Person trägt oben ihr Kürzel ein; es bleibt im Browser gespeichert.
+1. In der Cloud einen Ordner (z. B. „Termine“) per **öffentlichem Link** teilen, Berechtigung **„Bearbeiten“** (nicht nur
+   „Hochladen“ – die App muss die Datei auch lesen können), mit Passwort. Der Ordner aus „Cloud-Ordner einrichten“ geht auch.
+2. Damit der Browser auf die Cloud zugreifen darf, muss der Cloud-Admin die Adresse der App einmalig freigeben (CORS):
+   - **OpenCloud:** `OC_CORS_ALLOW_ORIGINS=https://NAME.github.io` (wie beim Upload).
+   - **Nextcloud (Apache):** `server/cloud/nextcloud-apache-cors.conf` einbinden (erlaubt jetzt auch Lesen und `If-Match`).
+3. In der App unter **⚙ Einstellungen** Art, Freigabe-Link, Passwort und Dateiname eintragen (an alle Mischer weitergeben;
+   wird nur im Browser gespeichert). Die Datei wird beim ersten Speichern angelegt.
+4. Jede Person trägt oben ihr Kürzel ein; es bleibt im Browser gespeichert.
 
-Jeder mit Token kann alle Termine bearbeiten und unter jedem Kürzel antworten – gedacht für ein kleines, vertrautes Team.
+**Die Datei ist menschenlesbar** und darf auch direkt in der Cloud oder in Excel bearbeitet werden:
+
+| Datum | Wochentag | Uhrzeit | Anlass | Eingeteilt | Hinweis | JD | MK |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| 25.10.2026 | Sonntag | 10:00 | Abendmahl | JD, MK | … | Ja | Vielleicht |
+
+Eine Zeile pro Termin; ab Spalte G eine Spalte pro Kürzel (Überschrift = Kürzel) mit `Ja`, `Vielleicht` oder `Nein` (leer =
+keine Antwort; auch `j`, `n`, `?` werden verstanden). „Wochentag“ ist nur zur Ansicht und wird ignoriert. Das Datum darf ein
+Datumsfeld oder Text wie `25.10.2026` / `2026-10-25` sein. Zeilen ohne gültiges Datum ignoriert die App (sie warnt, und beim nächsten
+Speichern gehen sie verloren). Die Spalten A–F müssen an ihrer Stelle bleiben; Formatierung ist egal, sie wird beim Speichern neu gesetzt.
+
+**Gleichzeitiges Speichern:** Eine Cloud hat keine Sperre wie ein eigener Server. Die App liest daher vor jeder Änderung die
+aktuelle Datei, schreibt sie zurück (mit `If-Match`, wo die Cloud das unterstützt – OpenCloud ignoriert es, getestet; bei Nextcloud ungetestet) und liest
+sie danach zur Kontrolle noch einmal; fehlt die eigene Änderung, weil jemand gleichzeitig geschrieben hat, wird sie erneut eingetragen.
+Getestet mit einer echten OpenCloud (mehrere gleichzeitige Antworten bleiben erhalten; bei sehr vielen exakt gleichzeitigen Änderungen
+meldet die App „bitte noch einmal versuchen“, statt still etwas zu verlieren). Eine kleine Lücke von wenigen 100 ms bleibt – für ein
+kleines Team ausreichend. Jeder mit Link und Passwort kann alle Termine bearbeiten und unter jedem Kürzel antworten.
+Wer die Datei gerade im Online-Editor der Cloud offen hat, kann sie kurz sperren (Meldung „gesperrt“, später erneut versuchen).
+
 Angezeigt werden die nächsten 12 Sonntage (einstellbar), ältere per „Ältere anzeigen“; „+ Weiterer Termin“ legt
 einen Termin an einem anderen Tag an (z. B. Karfreitag). Die Liste aktualisiert sich jede Minute.
 
@@ -167,15 +191,15 @@ falls gerade keine echte zur Hand ist.
 ```
 index.html, src/home.ts      Startseite mit Kacheln aus apps.json
 apps/predigt-schnitt/        Predigt-Schnitt (Schritte unter src/steps/)
-apps/termine/                Termine (src/model.ts: Datenmodell, auch vom Dev-Server genutzt)
+apps/termine/                Termine (src/model.ts: Datenmodell, src/xlsx.ts: Tabelle, src/api.ts: Cloud-Zugriff)
 packages/audio-core/         Decoder, Frame-Index, Merkmale, Erkennung, Lautheit, DSP, Pipeline, Worker
 packages/upload/             HTTP-Upload mit Fortschritt
 packages/settings/           localStorage-Store mit JSON-Export/-Import
 packages/auth/               Login-Sperre
 packages/ui-kit/             DOM-Helfer, Styles
-server/                      upload.php, termine.php und Vorlagen für den Zielserver (nicht Teil des Builds)
+server/                      upload.php und Vorlagen für den Zielserver (nicht Teil des Builds)
 scripts/                     bench.ts (Erkennungs-Benchmark), make-synthetic.py
-dev-server.ts                Test-Endpunkte (Upload, Termine) für dev/preview
+dev-server.ts                Test-Endpunkte (Upload, Cloud-Ordner für Termine) für dev/preview
 ```
 
 Neue App: Ordner unter `apps/`, Eintrag in `apps.json` und in `vite.config.ts` (`rollupOptions.input`).

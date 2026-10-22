@@ -1,5 +1,4 @@
-// Data model of the Termine app, shared by the browser, the dev server (dev-server.ts) and the tests.
-// server/termine.php implements the same rules in PHP – keep both in sync.
+// Data model of the Termine app, shared by the browser and the tests.
 
 export type Answer = 'yes' | 'maybe' | 'no';
 export const ANSWERS: Answer[] = ['yes', 'maybe', 'no'];
@@ -47,7 +46,7 @@ export function sundays(from: Date, count: number, offsetWeeks = 0): string[] {
   return Array.from({ length: count }, (_, i) => isoDate(new Date(d.getFullYear(), d.getMonth(), d.getDate() + i * 7)));
 }
 
-const isBlank = (e: DateEntry) => !e.title && !e.time && !e.assigned && !e.note && !Object.keys(e.votes).length;
+export const isBlank = (e: DateEntry) => !e.title && !e.time && !e.assigned && !e.note && !Object.keys(e.votes).length;
 
 export class OpError extends Error {}
 

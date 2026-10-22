@@ -2,8 +2,9 @@ import '../../../packages/ui-kit/ui.css';
 import './app.css';
 import { ensureLogin, logout } from '../../../packages/auth/auth';
 import { h, $, toast } from '../../../packages/ui-kit/dom';
-import { settingsStore, type Settings } from './settings';
-import { fetchData, sendOp } from './api';
+import { DEFAULT_FILE, isValidFileName, settingsStore, type Settings } from './settings';
+import type { CloudKind } from '../../../packages/upload/cloud-upload';
+import { fetchData, sendOp, type Loaded } from './api';
 import {
   ANSWERS, LIMITS, applyOp, emptyEntry, isValidDate, isoDate, normalizeSign, sundays,
   type Answer, type DateEntry, type TermineData,
@@ -31,7 +32,17 @@ const startEdit = (date: string | null) => { editing = date; openForm = null; re
 const parseIso = (iso: string) => { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d); };
 const today = () => isoDate(new Date());
 const fmtLong = (iso: string) => parseIso(iso).toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-const configured = () => !!(settings.url && settings.token);
+const configured = () => !!(settings.shareUrl && settings.file);
+
+/** Applies a server answer; warns once per count if rows of the spreadsheet had to be ignored. */
+let warnedSkipped = 0;
+function take(res: Loaded) {
+  data = res.data;
+  if (res.skipped && res.skipped !== warnedSkipped) {
+    toast(`${res.skipped} Zeile(n) in ${settings.file} haben kein gültiges Datum und werden ignoriert – beim nächsten Speichern gehen sie verloren.`, 'error', 10_000);
+  }
+  warnedSkipped = res.skipped;
+}
 
 /** Kürzel mentioned in the free-text "assigned" field ("JD, MK" / "JD + Gast"). */
 const assignedSigns = (e: DateEntry) => e.assigned.split(/[\s,;/+&]+/).map(normalizeSign).filter(Boolean);
@@ -58,7 +69,7 @@ function visibleDates(): string[] {
 async function load(quiet = false) {
   if (!configured()) { render(); return; }
   try {
-    data = await fetchData(settings);
+    take(await fetchData(settings));
     loaded = true;
     loadError = '';
     stand.textContent = new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
@@ -75,7 +86,7 @@ async function vote(date: string, answer: Answer | null) {
   applyOp(data, op); // optimistic
   render();
   try {
-    data = await sendOp(settings, op);
+    take(await sendOp(settings, op));
   } catch (e) {
     toast((e as Error).message, 'error');
     await load(true);
@@ -86,7 +97,7 @@ async function vote(date: string, answer: Answer | null) {
 
 async function saveEntry(date: string, fields: Pick<DateEntry, 'title' | 'time' | 'assigned' | 'note'>) {
   try {
-    data = await sendOp(settings, { action: 'update', date, ...fields });
+    take(await sendOp(settings, { action: 'update', date, ...fields }));
     toast('Gespeichert.', 'ok', 2000);
     startEdit(null);
   } catch (e) {
@@ -241,8 +252,8 @@ function render() {
   const head = signBar();
   if (!configured()) {
     main.replaceChildren(head, h('div', { class: 'notice warn' },
-      'Kein Server eingerichtet. Bitte unter ', h('button', { class: 'btn btn-sm', type: 'button', onclick: openSettings }, '⚙ Einstellungen'),
-      ' die URL von termine.php und das Token eintragen.'));
+      'Kein Cloud-Ordner eingerichtet. Bitte unter ', h('button', { class: 'btn btn-sm', type: 'button', onclick: openSettings }, '⚙ Einstellungen'),
+      ' den Freigabe-Link und das Passwort eintragen.'));
     return;
   }
   if (!loaded) {
@@ -267,13 +278,18 @@ function render() {
 function openSettings() {
   const draft = { ...settings };
   const dlg = h('dialog', { class: 'settings narrow-dialog' });
-  const input = (label: string, key: 'url' | 'token', attrs: Record<string, unknown>) => {
+  const text = (key: 'shareUrl' | 'password' | 'file', attrs: Record<string, unknown>) => {
     const el = h('input', { ...attrs, value: draft[key], spellcheck: 'false', autocomplete: 'off' });
     el.addEventListener('input', () => { draft[key] = el.value.trim(); });
-    return { el, label: h('label', null, label, el) };
+    return el;
   };
-  const url = input('Server-URL (termine.php)', 'url', { type: 'url', placeholder: 'https://example.org/termine.php' });
-  const token = input('Token', 'token', { type: 'password' });
+  const kind = h('select', null,
+    h('option', { value: 'opencloud' }, 'OpenCloud'), h('option', { value: 'nextcloud' }, 'Nextcloud'));
+  kind.value = draft.kind;
+  kind.addEventListener('change', () => { draft.kind = kind.value as CloudKind; });
+  const shareUrl = text('shareUrl', { type: 'url', placeholder: 'https://cloud.example.org/s/AbC123' });
+  const password = text('password', { type: 'password' });
+  const file = text('file', { placeholder: DEFAULT_FILE });
   const weeks = h('input', { type: 'number', min: 1, max: 52, value: String(draft.weeks) });
   weeks.addEventListener('change', () => { const v = Math.round(Number(weeks.value)); if (v >= 1 && v <= 52) draft.weeks = v; });
 
@@ -282,20 +298,27 @@ function openSettings() {
       h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => dlg.close() }, 'Abbrechen'),
       h('button', {
         class: 'btn btn-primary', type: 'button', onclick: () => {
+          if (!isValidFileName(draft.file)) { toast('Dateiname: muss auf .xlsx enden und darf keine Sonderzeichen wie / oder : enthalten.', 'error'); return; }
           Object.assign(settings, draft);
           settingsStore.save(settings);
           dlg.close();
           loaded = false;
+          warnedSkipped = 0;
           void load();
         },
       }, 'Speichern'),
     ),
     h('div', { class: 'dlg-body' },
-      h('fieldset', null, h('legend', null, 'Server'),
-        h('p', { class: 'muted small' }, 'Adresse von server/termine.php und das dort eingetragene Token. Wird nur in diesem Browser gespeichert.'),
-        h('div', { class: 'grid' }, url.label,
-          h('label', null, 'Token', h('div', { class: 'row nowrap' }, token.el,
-            h('button', { class: 'btn btn-sm btn-ghost', type: 'button', onclick: () => { token.el.type = token.el.type === 'password' ? 'text' : 'password'; } }, '👁')))),
+      h('fieldset', null, h('legend', null, 'Cloud-Ordner'),
+        h('p', { class: 'muted small' },
+          'Die Termine stehen in einer Excel-Datei (.xlsx) in einem Cloud-Ordner, den du per öffentlichem Link mit Bearbeiten-Recht und Passwort teilst. ' +
+          'Die Datei lässt sich dort oder in Excel direkt ansehen und bearbeiten. Link und Passwort werden nur in diesem Browser gespeichert.'),
+        h('div', { class: 'grid' },
+          h('label', null, 'Art', kind),
+          h('label', null, 'Freigabe-Link', shareUrl),
+          h('label', null, 'Passwort', h('div', { class: 'row nowrap' }, password,
+            h('button', { class: 'btn btn-sm btn-ghost', type: 'button', onclick: () => { password.type = password.type === 'password' ? 'text' : 'password'; } }, '👁'))),
+          h('label', null, 'Dateiname', file)),
       ),
       h('fieldset', null, h('legend', null, 'Anzeige'),
         h('label', null, 'Anzahl kommender Sonntage', weeks),

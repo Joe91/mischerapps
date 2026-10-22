@@ -28,7 +28,7 @@ export function cloudFileUrl(kind: CloudKind, link: ShareLink, name: string): st
     : `${link.base}/public.php/dav/files/${link.token}/${file}`;
 }
 
-function authHeader(kind: CloudKind, password: string): string | null {
+export function authHeader(kind: CloudKind, password: string): string | null {
   if (!password) return null;
   const user = kind === 'opencloud' ? 'public' : 'anonymous';
   return 'Basic ' + btoa(unescape(encodeURIComponent(`${user}:${password}`)));
