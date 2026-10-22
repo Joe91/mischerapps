@@ -84,9 +84,9 @@ async function load(quiet = false) {
 async function vote(date: string, answer: Answer | null) {
   if (!settings.sign) { toast('Bitte zuerst oben dein Kürzel eintragen.', 'error'); $<HTMLInputElement>('#sign')?.focus(); return; }
   const op = { action: 'vote' as const, date, sign: settings.sign, answer };
-  applyOp(data, op); // optimistic
-  render();
   try {
+    applyOp(data, op); // optimistic; throws if the date is gone meanwhile (deleted in another window)
+    render();
     take(await sendOp(op));
   } catch (e) {
     toast((e as Error).message, 'error');

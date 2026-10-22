@@ -1,7 +1,8 @@
 // Settings the admin sets once for everybody (stored in dataDir/settings.json), per app.
 // Only known keys of the right type are accepted.
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { serialQueue, writeAtomic } from './files';
 
 type Kind = 'string' | 'number' | 'boolean';
 
@@ -14,10 +15,15 @@ export const SHARED_SETTINGS: Record<string, Record<string, Kind>> = {
   },
 };
 
+/** settings.json exists but cannot be parsed: it is neither used nor overwritten until someone repairs or deletes it. */
+export class DamagedSettings extends Error {}
+
+const knownApp = (app: string) => Object.hasOwn(SHARED_SETTINGS, app);
+
 export class SharedSettings {
   private file: string;
-  private queue: Promise<unknown> = Promise.resolve();
-  constructor(private dir: string) { this.file = join(dir, 'settings.json'); }
+  private serialize = serialQueue();
+  constructor(dir: string) { this.file = join(dir, 'settings.json'); }
 
   private async readAll(): Promise<Record<string, Record<string, unknown>>> {
     let text: string;
@@ -25,17 +31,24 @@ export class SharedSettings {
       if ((e as NodeJS.ErrnoException).code === 'ENOENT') return {};
       throw e;
     }
-    try { return JSON.parse(text); } catch { return {}; } // hand-edited and broken: start over with the defaults
+    let all: unknown;
+    try { all = JSON.parse(text); } catch { all = null; }
+    // hand-edited and broken: overwriting it on the next save would lose everything in it
+    if (!all || typeof all !== 'object' || Array.isArray(all)) throw new DamagedSettings(`${this.file} is damaged (no valid JSON object)`);
+    return all as Record<string, Record<string, unknown>>;
   }
 
-  async get(app: string): Promise<Record<string, unknown>> {
-    return (await this.readAll())[app] ?? {};
+  /** null if the app is unknown */
+  async get(app: string): Promise<Record<string, unknown> | null> {
+    if (!knownApp(app)) return null;
+    const all = await this.readAll();
+    return Object.hasOwn(all, app) ? all[app] : {};
   }
 
   /** Keeps only valid keys; returns null if the app is unknown. */
   static sanitize(app: string, input: unknown): Record<string, unknown> | null {
+    if (!knownApp(app)) return null;
     const spec = SHARED_SETTINGS[app];
-    if (!spec) return null;
     const out: Record<string, unknown> = {};
     if (input && typeof input === 'object') {
       for (const [k, kind] of Object.entries(spec)) {
@@ -47,15 +60,10 @@ export class SharedSettings {
   }
 
   set(app: string, values: Record<string, unknown>): Promise<void> {
-    const job = async () => {
+    return this.serialize(async () => {
       const all = await this.readAll();
       all[app] = values;
-      await mkdir(this.dir, { recursive: true });
-      await writeFile(`${this.file}.tmp`, JSON.stringify(all, null, 2));
-      await rename(`${this.file}.tmp`, this.file);
-    };
-    const run = this.queue.then(job, job);
-    this.queue = run.catch(() => undefined);
-    return run;
+      await writeAtomic(this.file, JSON.stringify(all, null, 2));
+    });
   }
 }

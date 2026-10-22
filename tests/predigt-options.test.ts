@@ -33,13 +33,13 @@ describe('processing defaults', () => {
 
 describe('stored settings', () => {
   // what browsers and the server saved before the defaults changed
-  const before = { exportPreset: 'speech64', compressor: false, highpass: true, namePattern: 'predigt_eag_{datum}', preacher: 'Pfr. X' };
+  const before = { exportPreset: 'speech64', compressor: false, highpass: true, fadeOut: 1.5, namePattern: 'predigt_eag_{datum}', preacher: 'Pfr. X' };
 
   it('let the new defaults replace values saved with the old ones', () => {
     expect(upgradeStored(before)).toEqual({ highpass: true, preacher: 'Pfr. X', rev: 2 });
-    expect(upgradeStored({ ...before, namePattern: '{datum}_{titel}' })).toMatchObject({ namePattern: '{datum}_{titel}' });
+    expect(upgradeStored({ ...before, namePattern: '{datum}_{titel}', fadeOut: 2 })).toMatchObject({ namePattern: '{datum}_{titel}', fadeOut: 2 });
     const s = settingsStore.importJson(JSON.stringify({ settings: before }));
-    expect(s).toMatchObject({ exportPreset: 'speech96', compressor: true, namePattern: 'predigt-eag-{jjmmdd}', preacher: 'Pfr. X' });
+    expect(s).toMatchObject({ exportPreset: 'speech96', compressor: true, fadeOut: 0.5, namePattern: 'predigt-eag-{jjmmdd}', preacher: 'Pfr. X' });
   });
 
   it('keep what the admin chose after the update', () => {

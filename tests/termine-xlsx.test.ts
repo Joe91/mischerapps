@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import writeExcelFile from 'write-excel-file/universal';
 import { readSheet } from 'read-excel-file/universal';
 import { readTermineXlsx, writeTermineXlsx } from '../apps/termine/src/xlsx';
-import type { TermineData } from '../apps/termine/src/model';
+import { applyOp, type TermineData } from '../apps/termine/src/model';
 
 const sample = (): TermineData => ({
   dates: {
@@ -16,7 +16,7 @@ const sample = (): TermineData => ({
 describe('termine xlsx', () => {
   it('round-trips the data', async () => {
     const { data, skipped } = await readTermineXlsx(await writeTermineXlsx(sample()));
-    expect(data).toEqual(sample());
+    expect(data).toEqual({ ...sample(), sheet: { columns: ['JD', 'MK'], undated: [] } });
     expect(skipped).toBe(0);
   });
 
@@ -42,7 +42,7 @@ describe('termine xlsx', () => {
 
   it('writes an empty list as a header-only sheet', async () => {
     const { data } = await readTermineXlsx(await writeTermineXlsx({ dates: {} }));
-    expect(data).toEqual({ dates: {} });
+    expect(data).toEqual({ dates: {}, sheet: { columns: [], undated: [] } });
   });
 
   it('reads a file as edited by hand', async () => {
@@ -63,6 +63,26 @@ describe('termine xlsx', () => {
     expect(data.dates['2026-11-08'].title).toBe('Serial');
     expect(data.dates['2026-11-15'].title).toBe('ISO');
     expect(Object.keys(data.dates)).toHaveLength(4);
+  });
+
+  it('keeps what was added by hand when the app changes the file', async () => {
+    const edited = await writeExcelFile([
+      ['Datum', 'Wochentag', 'Uhrzeit', 'Anlass', 'Eingeteilt', 'Hinweis', 'Bemerkung', 'jd', 'AB', 'MK'],
+      ['25.10.2026', null, null, 'Abendmahl', null, null, 'Mikro mitbringen', 'x', null, 'ja'], // own column, "x" in a Kürzel column
+      ['01.11.2026', null, null, null, null, null, null, null, null, null],                     // AB: listed, no answers yet
+      ['Notizen', null, null, 'Bitte Technik prüfen', null, null, null, null, null, null],     // no date
+    ] as never).toBlob();
+    const { data } = await readTermineXlsx(edited);
+    // a mischer answers in the app, the file is written again
+    applyOp(data, { action: 'vote', date: '2026-11-01', sign: 'NEU', answer: 'yes' });
+    const rows = await readSheet(await writeTermineXlsx(data));
+    expect(rows[0]).toEqual(['Datum', 'Wochentag', 'Uhrzeit', 'Anlass', 'Eingeteilt', 'Hinweis', 'Bemerkung', 'jd', 'AB', 'MK', 'NEU']);
+    expect(rows[1].slice(6)).toEqual(['Mikro mitbringen', 'x', null, 'Ja', null]);
+    expect(rows[2].slice(6)).toEqual([null, null, null, null, 'Ja']);
+    expect(rows[3].slice(0, 4)).toEqual(['Notizen', null, null, 'Bitte Technik prüfen']);
+    // an answer given in the app replaces the "x"
+    applyOp(data, { action: 'vote', date: '2026-10-25', sign: 'JD', answer: 'no' });
+    expect((await readSheet(await writeTermineXlsx(data)))[1][7]).toBe('Nein');
   });
 
   it('rejects files that are not spreadsheets', async () => {

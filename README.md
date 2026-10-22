@@ -38,7 +38,7 @@ Die App muss unter der **Wurzel einer Adresse** laufen (eigene Subdomain, kein U
      Deploy. Portainer baut das Image auf dem NAS.
    - *Kommandozeile:* Repository klonen, `docker compose up -d --build`.
 
-   Der Container hört auf Port `9120` (in der Compose-Datei änderbar) und läuft als Benutzer `1026:100` wie die anderen Stacks –
+   Der Container hört auf Port `9120`, und zwar nur auf dem NAS selbst (`127.0.0.1`, in der Compose-Datei änderbar), und läuft als Benutzer `1026:100` wie die anderen Stacks –
    der Ordner `data` muss für diesen Benutzer beschreibbar sein.
 4. **Reverse-Proxy** (DSM → Anmeldeportal → Erweitert → Reverse-Proxy): Quelle `https://mischer.jujo.myds.me:443`,
    Ziel `http://localhost:9120`. Der Server wertet `X-Forwarded-For` / `X-Real-IP` (Sperre nach Fehlversuchen pro Adresse) und
@@ -64,8 +64,14 @@ Upload. Dateien mit Punkt am Anfang (`.session-secret`) zeigt File Station nur a
 
 ### Gut zu wissen
 
-- **Port nicht freigeben:** `9120` gehört nur hinter den Reverse-Proxy (nicht am Router weiterleiten). Sonst könnten Absender die
-  Kopfzeile `X-Forwarded-For` fälschen und die Sperre nach Fehlversuchen umgehen.
+- **Port nur für den Reverse-Proxy:** Die Compose-Datei bindet `9120` an `127.0.0.1`, also ist er nur vom NAS selbst erreichbar,
+  nicht aus dem Netz und nicht über den Router. Wer den Proxy umgehen kann, könnte die Kopfzeile `X-Forwarded-For` fälschen und
+  die Sperre nach Fehlversuchen aushebeln. Deshalb diese Bindung beibehalten und den Port nicht am Router weiterleiten.
+- **Handarbeit in `termine.xlsx`** bleibt erhalten: eigene Spalten (z. B. „Bemerkung“), Kürzel-Spalten ohne Antworten,
+  sonstiger Text in einer Kürzel-Spalte und Zeilen ohne Datum werden bei jeder Änderung aus der App unverändert zurückgeschrieben.
+  Eine Antwort aus der App ersetzt den Text in ihrer Zelle.
+- **`settings.json` von Hand ändern:** Ist die Datei danach kein gültiges JSON mehr, nutzt der Server sie nicht und überschreibt
+  sie auch nicht. Die App meldet das beim Speichern; bis zur Reparatur gelten die Werte im jeweiligen Browser.
 - **Erste Einrichtung:** Als `admin` in Predigt-Schnitt ⚙ Einstellungen einmal Gemeinde, Prediger, Namensschema, Lautheit, Format und Cover
   prüfen und *Speichern* – erst dann gelten sie für `mischer` (bis dahin nutzt dessen Browser die Standardwerte).
 - **Sichern:** den Ordner `data` mitsichern (z. B. Hyper Backup). Wiederherstellen = Ordner zurückkopieren.
@@ -156,7 +162,7 @@ docker run --rm -p 9120:8080 -v /tmp/mischer/config:/config:ro -v /tmp/mischer/d
 ```
 
 Die API (alle unter `/api`, Anmeldung per Cookie): `POST login` / `logout`, `GET me`, `GET`/`POST termine`,
-`GET termine/export` und `POST termine/import` (Admin), `GET`/`PUT settings/<app>` (PUT: Admin), `POST upload` (Feld `file`),
+`GET termine/export` und `POST termine/import` (Admin), `GET`/`PUT settings/<app>` (PUT: Admin), `POST upload?name=<datei>.mp3` (die MP3 als Body, `Content-Type: audio/mpeg`; wird direkt auf die Platte geschrieben),
 `GET uploads` (Admin), `GET health`. Fehlercodes des Uploads: `401` nicht angemeldet, `400` ungültiger Name, `409` Datei existiert schon,
 `413` zu groß, `415` keine MP3.
 
@@ -168,7 +174,8 @@ Die API (alle unter `/api`, Anmeldung per Cookie): `POST login` / `logout`, `GET
    Alternativ-Vorschläge, Vorhören, Feinjustieren (Tastatur: Leertaste, S/E, ←/→, Umschalt, P).
 3. **Export** – Titel, Prediger, Datum, Bibelstelle und Dateiname eintragen (Schema `predigt-eag-{jjmmdd}`,
    z. B. `predigt-eag-260712.mp3`). Lautheit und Klang werden automatisch nach den Voreinstellungen des Admins
-   angepasst (Standard: −19 LUFS, Hochpass 80 Hz, sanfte Kompression 2:1, „Sprache hoch“ = Mono 96 kbps);
+   angepasst (Standard: −19 LUFS, Hochpass 80 Hz, sanfte Kompression 2:1, „Sprache hoch“ = Mono 96 kbps,
+   0,5 s Ausblenden – die Predigt endet meist mit „Amen“);
    Messung und MP3-Kodierung laufen schon im Hintergrund, während die Angaben ausgefüllt werden – „MP3 exportieren“
    schreibt dann nur noch die Tags (Titel, Prediger …) hinein und ist sofort fertig. **⚙ Erweitert** zeigt
    Messwerte und erlaubt, Zielwert, Format, Ein-/Ausblenden, Hochpass und Kompression für diese eine Aufnahme

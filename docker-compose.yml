@@ -12,7 +12,8 @@ services:
     security_opt:
       - no-new-privileges:true
     ports:
-      - 9120:8080
+      # only the reverse proxy on the NAS itself may connect (from the network it could bypass the login limit)
+      - 127.0.0.1:9120:8080
     environment:
       TZ: Europe/Berlin
     volumes:

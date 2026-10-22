@@ -2,7 +2,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createReadStream } from 'node:fs';
 import { readFile, stat } from 'node:fs/promises';
-import { extname, resolve, sep } from 'node:path';
+import { extname, relative, resolve, sep } from 'node:path';
 import { gzipSync } from 'node:zlib';
 
 const TYPES: Record<string, string> = {
@@ -25,7 +25,12 @@ export function createStatic(dir: string) {
     if (file !== root && !file.startsWith(root + sep)) { res.statusCode = 403; res.end('forbidden'); return true; }
     let info = await stat(file).catch(() => null);
     if (info?.isDirectory()) {
-      if (!rel.endsWith('/')) { res.statusCode = 301; res.setHeader('Location', rel + '/'); res.end(); return true; } // relative asset URLs need the slash
+      if (!rel.endsWith('/')) {
+        // relative asset URLs need the slash. The target is built from the checked path, never from the request:
+        // "/%2Fevil.com%2F..%2Fapps" would otherwise become "//evil.com/../apps/", a link to another site.
+        const path = relative(root, file).split(sep).filter(Boolean).map(encodeURIComponent).join('/');
+        res.statusCode = 301; res.setHeader('Location', `/${path ? path + '/' : ''}`); res.end(); return true;
+      }
       const index = resolve(file, 'index.html');
       info = await stat(index).catch(() => null);
       return info ? send(req, res, index, info.size, info.mtimeMs) : false;

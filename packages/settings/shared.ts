@@ -14,5 +14,10 @@ export async function saveShared(app: string, values: unknown): Promise<void> {
   const res = await fetch(`/api/settings/${app}`, {
     method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(values),
   });
-  if (!res.ok) throw new Error(res.status === 403 ? 'Nur der Admin darf die gemeinsamen Einstellungen ändern.' : `Speichern auf dem Server fehlgeschlagen (${res.status}).`);
+  if (res.ok) return;
+  if (res.status === 403) throw new Error('Nur der Admin darf die gemeinsamen Einstellungen ändern.');
+  if ((await res.text()).includes('damaged')) {
+    throw new Error('Die Datei settings.json auf dem NAS ist beschädigt und wird deshalb nicht überschrieben. Bitte reparieren oder löschen.');
+  }
+  throw new Error(`Speichern auf dem Server fehlgeschlagen (${res.status}).`);
 }

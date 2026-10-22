@@ -41,17 +41,14 @@ async function login(user: string, password: string) {
 const as = (cookie: string) => ({ headers: { Cookie: cookie } });
 const json = (cookie: string, method: string, body: unknown) =>
   ({ method, headers: { Cookie: cookie, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-const mp3 = (name: string, bytes = 'ID3\x03\x00\x00\x00\x00\x00\x00fake') => {
-  const form = new FormData();
-  form.append('file', new Blob([bytes]), name);
-  return form;
-};
+const mp3 = (cookie: string, name: string, body: BodyInit = 'ID3\x03\x00\x00\x00\x00\x00\x00fake', type = 'audio/mpeg') =>
+  fetch(`${base}/api/upload?name=${encodeURIComponent(name)}`, { method: 'POST', headers: { Cookie: cookie, 'Content-Type': type }, body, duplex: 'half' } as RequestInit);
 
 describe('login', () => {
   it('needs a session for everything but login', async () => {
     expect((await fetch(`${base}/api/me`)).status).toBe(401);
     expect((await fetch(`${base}/api/termine`)).status).toBe(401);
-    expect((await fetch(`${base}/api/upload`, { method: 'POST', body: mp3('a.mp3') })).status).toBe(401);
+    expect((await mp3('', 'a.mp3')).status).toBe(401);
     expect((await fetch(`${base}/api/health`)).status).toBe(200);
   });
 
@@ -199,22 +196,49 @@ describe('shared settings', () => {
     expect(await put.json()).toEqual({ fadeIn: 2, namePattern: 'p_{datum}' }); // unknown keys and wrong types dropped
     expect(await (await fetch(`${base}/api/settings/predigt`, as(m))).json()).toEqual({ fadeIn: 2, namePattern: 'p_{datum}' });
     expect((await fetch(`${base}/api/settings/unknown`, json(a, 'PUT', {}))).status).toBe(404);
+    expect((await fetch(`${base}/api/settings/constructor`, as(m))).status).toBe(404); // no Object.prototype members
+    expect((await fetch(`${base}/api/settings/constructor`, json(a, 'PUT', {}))).status).toBe(404);
+  });
+
+  it('never overwrites a damaged settings.json', async () => {
+    const a = (await login('admin', 'admin-password')).cookie;
+    const file = join(dir, 'data/settings.json');
+    const before = await readFile(file, 'utf8');
+    await writeFile(file, '{ "predigt": { "fadeIn": 2, } }'); // trailing comma, edited by hand
+    expect((await fetch(`${base}/api/settings/predigt`, as(a))).status).toBe(500);
+    expect((await fetch(`${base}/api/settings/predigt`, json(a, 'PUT', { fadeIn: 3 }))).status).toBe(500);
+    expect(await readFile(file, 'utf8')).toBe('{ "predigt": { "fadeIn": 2, } }');
+    await writeFile(file, before);
   });
 });
 
 describe('upload', () => {
   it('stores MP3 files without ever overwriting', async () => {
     const m = (await login('mischer', 'mischer-password')).cookie;
-    const up = (f: FormData) => fetch(`${base}/api/upload`, { method: 'POST', headers: { Cookie: m }, body: f });
-    expect((await up(mp3('predigt_2030-01-06.mp3'))).status).toBe(200);
-    expect((await readFile(join(dir, 'data/predigten/predigt_2030-01-06.mp3'))).length).toBeGreaterThan(5);
-    expect((await up(mp3('predigt_2030-01-06.mp3'))).status).toBe(409);
-    expect((await up(mp3('../evil.mp3'))).status).toBe(200); // path part is stripped…
-    expect((await readFile(join(dir, 'data/predigten/evil.mp3'))).length).toBeGreaterThan(0); // …and it stays inside the folder
-    expect((await up(mp3('bad name.mp3'))).status).toBe(400);
-    expect((await up(mp3('x.txt'))).status).toBe(400);
-    expect((await up(mp3('notmp3.mp3', 'hello world'))).status).toBe(415);
-    expect((await up(mp3('big.mp3', 'ID3' + 'x'.repeat(2 * 1024 * 1024)))).status).toBe(413);
+    expect((await mp3(m, 'predigt_2030-01-06.mp3')).status).toBe(200);
+    expect((await readFile(join(dir, 'data/predigten/predigt_2030-01-06.mp3'), 'latin1'))).toBe('ID3\x03\x00\x00\x00\x00\x00\x00fake');
+    expect((await mp3(m, 'predigt_2030-01-06.mp3')).status).toBe(409);
+    expect((await mp3(m, '../evil.mp3')).status).toBe(400); // no paths
+    expect((await mp3(m, 'bad name.mp3')).status).toBe(400);
+    expect((await mp3(m, 'x.txt')).status).toBe(400);
+    expect((await mp3(m, 'notmp3.mp3', 'hello world')).status).toBe(415);
+    expect((await mp3(m, 'form.mp3', 'ID3…', 'multipart/form-data; boundary=x')).status).toBe(415); // only the bare file
+    expect((await mp3(m, 'big.mp3', 'ID3' + 'x'.repeat(2 * 1024 * 1024))).status).toBe(413);
+    await expect(readFile(join(dir, 'data/predigten/notmp3.mp3'))).rejects.toThrow();
+  });
+
+  it('stops a too large upload without a declared size and leaves no partial file', async () => {
+    const m = (await login('mischer', 'mischer-password')).cookie;
+    const chunk = new Uint8Array(256 * 1024).fill(0x41);
+    chunk.set([0x49, 0x44, 0x33]);
+    let sent = 0;
+    const body = new ReadableStream({ pull(c) { if (sent++ < 8) c.enqueue(chunk); else c.close(); } }); // 2 MB, streamed
+    expect((await mp3(m, 'stream.mp3', body)).status).toBe(413);
+    await expect(readFile(join(dir, 'data/predigten/stream.mp3'))).rejects.toThrow();
+    // a streamed file below the limit arrives complete
+    sent = 6;
+    expect((await mp3(m, 'stream.mp3', new ReadableStream({ pull(c) { if (sent++ < 8) c.enqueue(chunk); else c.close(); } }))).status).toBe(200);
+    expect((await readFile(join(dir, 'data/predigten/stream.mp3'))).length).toBe(2 * chunk.length);
   });
 
   it('lists uploads for the admin', async () => {
@@ -230,6 +254,10 @@ describe('static files', () => {
     expect(await (await fetch(`${base}/`)).text()).toBe('<h1>home</h1>');
     const redirect = await fetch(`${base}/apps/termine`, { redirect: 'manual' });
     expect([redirect.status, redirect.headers.get('location')]).toEqual([301, '/apps/termine/']);
+    for (const evil of ['/%2Fevil.com%2F..%2Fapps', '//evil.com/../apps', '/%5Cevil.com/../apps']) { // never a link to another site
+      const r = await fetch(`${base}${evil}`, { redirect: 'manual' });
+      if (r.status === 301) expect(r.headers.get('location')).toBe('/apps/');
+    }
     expect(await (await fetch(`${base}/apps/termine/`)).text()).toBe('<h1>termine</h1>');
     const asset = await fetch(`${base}/assets/app.js`, { headers: { 'Accept-Encoding': 'gzip' } });
     expect(asset.headers.get('cache-control')).toContain('immutable');

@@ -5,7 +5,8 @@
 // One row per date, one column per Kürzel (from column G on) holding Ja / Vielleicht / Nein. The rows are
 // the dates the app lists: a row with nothing but a date is a date people can answer, a deleted row is gone.
 // "Wochentag" is only there for the eye and is ignored when reading, so people can edit the file in
-// Excel / the cloud's office editor. Dates are written as real date cells (UTC midnight, so the
+// Excel. Whatever else is in the file (own columns, Kürzel without answers, other text in a Kürzel
+// column, rows without a date) is kept: it is written back unchanged on the next change. Dates are written as real date cells (UTC midnight, so the
 // calendar day is the same in every time zone) and read back as dates, "25.10.2026" or "2026-10-25".
 import writeExcelFile from 'write-excel-file/universal';
 import { readSheet } from 'read-excel-file/universal';
@@ -21,15 +22,21 @@ const ANSWER_FILL: Record<Answer, string> = { yes: '#c6efce', maybe: '#ffeb9c', 
 
 const utcDate = (iso: string) => { const [y, m, d] = iso.split('-').map(Number); return new Date(Date.UTC(y, m - 1, d)); };
 
+/** Column key: the Kürzel for a Kürzel column ("jd" → "JD"), otherwise the header itself. */
+const columnKey = (header: string) => normalizeSign(header) || header;
+
 export async function writeTermineXlsx(data: TermineData): Promise<Blob> {
   const dates = Object.keys(data.dates).sort();
-  const signs = [...new Set(dates.flatMap(d => Object.keys(data.dates[d].votes)))].sort();
+  // the columns of the file in their order, then Kürzel answering for the first time
+  const columns = new Map<string, string>(); // key → header
+  for (const header of data.sheet?.columns ?? []) if (!columns.has(columnKey(header))) columns.set(columnKey(header), header);
+  for (const sign of [...new Set(dates.flatMap(d => Object.keys(data.dates[d].votes)))].sort()) if (!columns.has(sign)) columns.set(sign, sign);
   const head = { fontWeight: 'bold' as const, backgroundColor: '#d9d9d9', align: 'center' as const };
+  const text = (value: string, wrap = false) => (value ? { value, format: '@', wrap, alignVertical: 'top' as const } : null);
 
-  const rows: unknown[][] = [[...FIXED, ...signs].map(value => ({ value, ...head }))];
+  const rows: unknown[][] = [[...FIXED, ...columns.values()].map(value => ({ value, ...head }))];
   for (const date of dates) {
     const e = data.dates[date];
-    const text = (value: string, wrap = false) => (value ? { value, format: '@', wrap, alignVertical: 'top' as const } : null);
     rows.push([
       { value: utcDate(date), format: 'dd.mm.yyyy', align: 'left', alignVertical: 'top' },
       { value: WEEKDAYS[utcDate(date).getUTCDay()], textColor: '#7f7f7f', alignVertical: 'top' },
@@ -37,15 +44,16 @@ export async function writeTermineXlsx(data: TermineData): Promise<Blob> {
       text(e.title),
       text(e.assigned),
       text(e.note, true),
-      ...signs.map(s => {
-        const a = e.votes[s];
-        return a ? { value: ANSWER_TEXT[a], backgroundColor: ANSWER_FILL[a], align: 'center', alignVertical: 'top' } : null;
+      ...[...columns.keys()].map(key => {
+        const a = e.votes[key];
+        return a ? { value: ANSWER_TEXT[a], backgroundColor: ANSWER_FILL[a], align: 'center', alignVertical: 'top' } : text(e.extra?.[key] ?? '');
       }),
     ]);
   }
+  for (const row of data.sheet?.undated ?? []) rows.push(row.map(v => text(v)));
   return writeExcelFile(rows as never, {
     sheet: 'Termine',
-    columns: [{ width: 12 }, { width: 12 }, { width: 9 }, { width: 24 }, { width: 18 }, { width: 40 }, ...signs.map(() => ({ width: 11 }))],
+    columns: [{ width: 12 }, { width: 12 }, { width: 9 }, { width: 24 }, { width: 18 }, { width: 40 }, ...[...columns.keys()].map(k => ({ width: normalizeSign(k) ? 11 : 18 }))],
     stickyRowsCount: 1,
     stickyColumnsCount: 1,
   }).toBlob();
@@ -97,27 +105,32 @@ export interface ParsedTermine { data: TermineData; /** rows with content but wi
 /** An empty or missing first sheet gives no dates. Throws if the input is not an xlsx file. */
 export async function readTermineXlsx(file: Blob | ArrayBuffer): Promise<ParsedTermine> {
   const rows = await readSheet(file);
-  const data: TermineData = { dates: {} };
+  const sheet = { columns: [] as string[], undated: [] as string[][] };
+  const data: TermineData = { dates: {}, sheet };
   let skipped = 0;
   const header = rows[0] ?? [];
-  const signAt = new Map<number, string>();
+  const keyAt = new Map<number, string>();
   for (let c = FIXED.length; c < header.length; c++) {
-    const sign = normalizeSign(toText(header[c]));
-    if (sign) signAt.set(c, sign);
+    const text = toText(header[c]);
+    if (!text) continue; // a column without a header cannot be told apart from an empty one
+    sheet.columns.push(text);
+    keyAt.set(c, columnKey(text));
   }
 
   for (const row of rows.slice(1)) {
     if (row.every(cell => toText(cell) === '')) continue;
     const date = toIsoDate(row[0]);
-    if (!date) { skipped++; continue; }
+    if (!date) { skipped++; sheet.undated.push(row.map(toText)); continue; }
     const entry = data.dates[date] ?? emptyEntry();
     entry.time = toTime(row[2]).slice(0, LIMITS.time);
     entry.title = toText(row[3]).slice(0, LIMITS.title);
     entry.assigned = toText(row[4]).slice(0, LIMITS.assigned);
     entry.note = toText(row[5]).slice(0, LIMITS.note);
-    for (const [c, sign] of signAt) {
-      const a = toAnswer(row[c]);
-      if (a) entry.votes[sign] = a;
+    for (const [c, key] of keyAt) {
+      const a = normalizeSign(key) ? toAnswer(row[c]) : null;
+      const cell = toText(row[c]);
+      if (a) entry.votes[key] = a;
+      else if (cell) (entry.extra ??= {})[key] = cell;
     }
     data.dates[date] = entry; // a row with just a date is a date on the list
   }

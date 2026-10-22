@@ -11,9 +11,20 @@ export interface DateEntry {
   note: string;
   /** Kürzel → answer */
   votes: Record<string, Answer>;
+  /** spreadsheet cells the app does not understand (own columns, "x" in a Kürzel column): column → text, kept as they are */
+  extra?: Record<string, string>;
 }
 
-export interface TermineData { dates: Record<string, DateEntry>; }
+export interface TermineData {
+  dates: Record<string, DateEntry>;
+  /** what else is in the spreadsheet, so that hand edits survive the next change made in the app */
+  sheet?: {
+    /** headers from column G on, in file order (Kürzel and own columns, also those without any answers) */
+    columns: string[];
+    /** rows with content but without a usable date, as text */
+    undated: string[][];
+  };
+}
 
 /** The list of dates is chosen by the admin: a date exists once it has a row, even without any details or answers. */
 export type Op =
@@ -70,6 +81,7 @@ export function applyOp(data: TermineData, op: Op): TermineData {
     if (!entry) throw new OpError('unknown date');
     const sign = normalizeSign(String(op.sign ?? ''));
     if (!sign) throw new OpError('bad sign');
+    if (entry.extra) delete entry.extra[sign]; // the answer replaces whatever was typed into the cell
     if (op.answer === null) delete entry.votes[sign];
     else if (ANSWERS.includes(op.answer)) entry.votes[sign] = op.answer;
     else throw new OpError('bad answer');

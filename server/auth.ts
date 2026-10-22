@@ -52,6 +52,10 @@ export class LoginLimiter {
     const list = this.recent(key, now);
     return list.length >= this.max ? Math.ceil((list[0] + this.windowMs - now) / 1000) : 0;
   }
-  fail(key: string, now = Date.now()) { this.fails.set(key, [...this.recent(key, now), now]); }
+  fail(key: string, now = Date.now()) {
+    // entries are otherwise only cleaned up when the same address comes back
+    if (this.fails.size > 10_000) for (const k of [...this.fails.keys()]) this.recent(k, now);
+    this.fails.set(key, [...this.recent(key, now), now]);
+  }
   reset(key: string) { this.fails.delete(key); }
 }

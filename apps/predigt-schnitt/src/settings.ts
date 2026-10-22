@@ -70,7 +70,7 @@ export function defaultSettings(): Settings {
     highpass: true,
     compressor: true,
     fadeIn: 0.5,
-    fadeOut: 1.5,
+    fadeOut: 0.5, // sermons end with "Amen": just enough to avoid a click
     maxGainDb: 20,
     namePattern: 'predigt-eag-{jjmmdd}',
     congregation: '',
@@ -88,7 +88,7 @@ export const SETTINGS_REV = 2;
 
 /**
  * Saved values (browser, server, imported file) from an older revision: drops those whose default has
- * changed since, so the new default applies. Rev 2: "Sprache hoch" with compression, names predigt-eag-JJMMDD.
+ * changed since, so the new default applies. Rev 2: "Sprache hoch" with compression, fade-out 0.5 s, names predigt-eag-JJMMDD.
  */
 export function upgradeStored(stored: unknown): unknown {
   if (!stored || typeof stored !== 'object') return stored;
@@ -96,6 +96,7 @@ export function upgradeStored(stored: unknown): unknown {
   if (values.rev === SETTINGS_REV) return values;
   delete values.exportPreset;
   delete values.compressor;
+  if (values.fadeOut === 1.5) delete values.fadeOut;
   if (values.namePattern === 'predigt_eag_{datum}') delete values.namePattern;
   return { ...values, rev: SETTINGS_REV };
 }

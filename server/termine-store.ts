@@ -1,10 +1,11 @@
 // The Termine live in one human-readable spreadsheet (dataDir/termine.xlsx, see apps/termine/src/xlsx.ts).
 // It is read on every request, so edits made by hand on the NAS show up immediately. Changes are applied
 // one at a time and written atomically, so simultaneous answers cannot overwrite each other.
-import { mkdir, readFile, rename, writeFile, copyFile } from 'node:fs/promises';
+import { readFile, copyFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { applyOp, emptyEntry, sundays, type Op, type TermineData } from '../apps/termine/src/model';
 import { readTermineXlsx, writeTermineXlsx } from '../apps/termine/src/xlsx';
+import { serialQueue, writeAtomic } from './files';
 
 export class InvalidSpreadsheet extends Error {}
 
@@ -14,7 +15,7 @@ const toBuffer = async (blob: Blob) => Buffer.from(await blob.arrayBuffer());
 
 export class TermineStore {
   private file: string;
-  private queue: Promise<unknown> = Promise.resolve();
+  private serialize = serialQueue();
 
   constructor(private dir: string) { this.file = join(dir, 'termine.xlsx'); }
 
@@ -28,17 +29,8 @@ export class TermineStore {
     return readTermineXlsx(new Blob([new Uint8Array(buf)]));
   }
 
-  private serialize<T>(job: () => Promise<T>): Promise<T> {
-    const run = this.queue.then(job, job);
-    this.queue = run.catch(() => undefined);
-    return run;
-  }
-
   private async write(data: TermineData) {
-    await mkdir(this.dir, { recursive: true });
-    const tmp = `${this.file}.tmp`;
-    await writeFile(tmp, await toBuffer(await writeTermineXlsx(data)));
-    await rename(tmp, this.file);
+    await writeAtomic(this.file, await toBuffer(await writeTermineXlsx(data)));
   }
 
   /** Applies one change. Throws OpError for invalid input. */

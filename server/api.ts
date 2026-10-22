@@ -3,15 +3,14 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { createWriteStream } from 'node:fs';
-import { mkdir, readdir, stat, unlink } from 'node:fs/promises';
-import { Readable } from 'node:stream';
+import { mkdir, open, readdir, stat, unlink } from 'node:fs/promises';
 import { pipeline } from 'node:stream/promises';
 import { join } from 'node:path';
 import { OpError, type Op } from '../apps/termine/src/model';
+import { XLSX_MIME } from '../apps/termine/src/xlsx';
 import { LoginLimiter, signSession, verifyPassword, verifySession } from './auth';
 import { ROLES, type Role, type ServerConfig } from './config';
-import { SharedSettings } from './shared-settings';
+import { DamagedSettings, SharedSettings } from './shared-settings';
 import { InvalidSpreadsheet, TermineStore } from './termine-store';
 
 export class HttpError extends Error {
@@ -20,7 +19,6 @@ export class HttpError extends Error {
 
 const COOKIE = 'mischer_session';
 const FILE_NAME = /^[A-Za-z0-9._-]{1,120}\.mp3$/;
-const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
 function secretFor(cfg: ServerConfig): string {
   if (cfg.sessionSecret) return cfg.sessionSecret;
@@ -107,32 +105,63 @@ export function createApi(cfg: ServerConfig) {
     sendJson(res, 200, { user: role, role }, { 'Set-Cookie': cookieHeader(req, signSession(secret, role, cfg.users[role], Date.now() + maxAge * 1000), maxAge) });
   }
 
+  /**
+   * POST /api/upload?name=<file>.mp3 with the MP3 as the body (Content-Type audio/mpeg). Written to disk while
+   * it arrives, so the server never holds the file in memory. Never overwrites an existing file.
+   */
   async function upload(req: IncomingMessage, res: ServerResponse) {
-    const type = String(req.headers['content-type'] ?? '');
-    if (!type.startsWith('multipart/form-data')) throw new HttpError(400, 'upload error');
-    const body = await readBody(req, maxUpload + 1024 * 1024);
-    const form = await new Response(body as unknown as BodyInit, { headers: { 'content-type': type } }).formData().catch(() => null);
-    const file = form?.get('file');
-    if (!(file instanceof File)) throw new HttpError(400, 'upload error');
-    if (file.size > maxUpload) throw new HttpError(413, 'too large');
-    const name = file.name.split(/[\\/]/).pop() ?? '';
+    // audio/mpeg is no "simple" type: a foreign page cannot send it without a CORS preflight (which is refused)
+    if (!String(req.headers['content-type'] ?? '').startsWith('audio/mpeg')) throw new HttpError(415, 'not mp3');
+    const name = new URL(req.url ?? '', 'http://x').searchParams.get('name') ?? '';
     if (!FILE_NAME.test(name)) throw new HttpError(400, 'bad name');
-    const head = new Uint8Array(await file.slice(0, 3).arrayBuffer());
-    const isId3 = head[0] === 0x49 && head[1] === 0x44 && head[2] === 0x33;
-    const isFrame = head[0] === 0xff && (head[1] & 0xe0) === 0xe0;
-    if (!isId3 && !isFrame) throw new HttpError(415, 'not mp3');
-    await mkdir(predigten, { recursive: true });
-    const target = join(predigten, name);
+    if (Number(req.headers['content-length'] ?? 0) > maxUpload) throw new HttpError(413, 'too large');
+
+    const body = req[Symbol.asyncIterator]() as AsyncIterator<Buffer>;
     try {
-      // 'wx': never overwrite; streamed, so the file is not copied once more in memory
-      await pipeline(Readable.fromWeb(file.stream() as never), createWriteStream(target, { flags: 'wx' }));
+      await receive(body, name);
     } catch (e) {
-      if ((e as NodeJS.ErrnoException).code === 'EEXIST') throw new HttpError(409, 'exists');
-      await unlink(target).catch(() => undefined); // no half-written file
+      // read the rest anyway, otherwise the browser may wait forever for the error answer
+      (async () => { while (!(await body.next()).done); })().catch(() => undefined);
       throw e;
     }
-    log(`upload ${name} (${Math.round(file.size / 1024)} kB)`);
     sendJson(res, 200, { ok: true, file: name });
+  }
+
+  async function receive(body: AsyncIterator<Buffer>, name: string) {
+    // the first bytes decide whether it is an MP3 at all, before a file is created
+    let head = Buffer.alloc(0);
+    while (head.length < 3) {
+      const next = await body.next();
+      if (next.done) break;
+      head = Buffer.concat([head, next.value]);
+    }
+    const isId3 = head[0] === 0x49 && head[1] === 0x44 && head[2] === 0x33;
+    const isFrame = head[0] === 0xff && (head[1] & 0xe0) === 0xe0;
+    if (head.length < 3 || (!isId3 && !isFrame)) throw new HttpError(415, 'not mp3');
+
+    await mkdir(predigten, { recursive: true });
+    const target = join(predigten, name);
+    const out = await open(target, 'wx').catch(e => { // 'wx': never overwrite
+      throw (e as NodeJS.ErrnoException).code === 'EEXIST' ? new HttpError(409, 'exists') : e;
+    });
+    let size = 0;
+    async function* chunks() {
+      for (let chunk: Buffer | undefined = head; chunk; ) {
+        size += chunk.length;
+        if (size > maxUpload) throw new HttpError(413, 'too large');
+        yield chunk;
+        const next = await body.next();
+        chunk = next.done ? undefined : next.value;
+      }
+    }
+    try {
+      await pipeline(chunks(), out.createWriteStream());
+    } catch (e) {
+      await out.close().catch(() => undefined);
+      await unlink(target).catch(() => undefined); // no half-written file (too large, connection lost)
+      throw e;
+    }
+    log(`upload ${name} (${Math.round(size / 1024)} kB)`);
   }
 
   async function route(req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
@@ -185,7 +214,11 @@ export function createApi(cfg: ServerConfig) {
     const settingsMatch = /^\/api\/settings\/([a-z]+)$/.exec(path);
     if (settingsMatch) {
       const app = settingsMatch[1];
-      if (method === 'GET') return sendJson(res, 200, await shared.get(app));
+      if (method === 'GET') {
+        const values = await shared.get(app);
+        if (!values) throw new HttpError(404, 'unknown app');
+        return sendJson(res, 200, values);
+      }
       if (method === 'PUT') {
         admin();
         const values = SharedSettings.sanitize(app, await readJson(req, 2 * 1024 * 1024));
@@ -217,6 +250,7 @@ export function createApi(cfg: ServerConfig) {
       if (res.headersSent) { res.end(); return true; }
       if (e instanceof HttpError) sendText(res, e.status, e.message);
       else if (e instanceof OpError) sendText(res, 400, e.message);
+      else if (e instanceof DamagedSettings) { console.error(e.message); sendText(res, 500, 'settings.json is damaged'); }
       else { console.error(e); sendText(res, 500, 'server error'); }
     }
     return true;

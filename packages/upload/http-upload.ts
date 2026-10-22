@@ -11,7 +11,7 @@ export function describeUploadError(status: number, body: string): string {
     case 0: return 'Server nicht erreichbar. Bitte die Internetverbindung prüfen.';
     case 400: return b === 'bad name'
       ? 'Der Server hat den Dateinamen abgelehnt (erlaubt: Buchstaben, Ziffern, . _ - und Endung .mp3).'
-      : 'Der Server hat die Datei nicht erhalten (Upload-Fehler).';
+      : `Der Server hat die Datei nicht angenommen${b ? ` (${b.slice(0, 100)})` : ''}.`;
     case 401: return 'Die Anmeldung ist abgelaufen. Bitte die Seite neu laden und anmelden (die bearbeitete Datei geht dabei verloren – vorher herunterladen).';
     case 409: return 'Der Server hat die Datei abgelehnt: Datei existiert bereits. Bitte Dateinamen ändern.';
     case 413: return 'Der Server hat die Datei abgelehnt: Datei zu groß.';
@@ -26,16 +26,15 @@ export function uploadFile(url: string, file: Blob, name: string,
   onProgress: (p: number) => void): { promise: Promise<string>; abort: () => void } {
   const xhr = new XMLHttpRequest(); // XHR, because fetch has no upload progress
   const promise = new Promise<string>((resolve, reject) => {
-    const fd = new FormData();
-    fd.append('file', file, name);
-    xhr.open('POST', url);
+    xhr.open('POST', `${url}${url.includes('?') ? '&' : '?'}name=${encodeURIComponent(name)}`);
+    xhr.setRequestHeader('Content-Type', 'audio/mpeg');
     xhr.upload.onprogress = e => e.lengthComputable && onProgress(e.loaded / e.total);
     xhr.onload = () => xhr.status >= 200 && xhr.status < 300
       ? resolve(xhr.responseText)
       : reject(new UploadError(xhr.status, xhr.responseText));
     xhr.onerror = () => reject(new UploadError(0, ''));
     xhr.onabort = () => reject(new Error('Upload abgebrochen.'));
-    xhr.send(fd);
+    xhr.send(file); // the bare file: the server writes it to disk as it arrives
   });
   return { promise, abort: () => xhr.abort() };
 }
