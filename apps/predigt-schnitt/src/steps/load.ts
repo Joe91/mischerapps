@@ -2,12 +2,12 @@ import { h, fmtTime, fmtBytes, progressBar, toast } from '../../../../packages/u
 import { STEP, type Ctx, type Step } from '../context';
 
 export function createLoadStep(ctx: Ctx): Step {
-  const input = h('input', { type: 'file', accept: '.mp3,audio/mpeg', class: 'hidden' });
+  const input = h('input', { type: 'file', accept: '.mp3,.wav,audio/mpeg,audio/wav,audio/x-wav,audio/wave', class: 'hidden' });
   const status = h('div');
-  const drop = h('div', { class: 'dropzone', tabindex: 0, role: 'button', 'aria-label': 'MP3-Datei auswählen' },
+  const drop = h('div', { class: 'dropzone', tabindex: 0, role: 'button', 'aria-label': 'MP3- oder WAV-Datei auswählen' },
     h('div', { class: 'dropzone-icon', 'aria-hidden': 'true' }, '♪'),
-    h('strong', null, 'MP3-Datei hierher ziehen'),
-    h('span', { class: 'muted' }, 'oder klicken zum Auswählen – z. B. die Aufnahme des ganzen Gottesdienstes'),
+    h('strong', null, 'MP3- oder WAV-Datei hierher ziehen'),
+    h('span', { class: 'muted' }, 'oder klicken zum Auswählen – z. B. die Aufnahme des ganzen Gottesdienstes vom Mischpult'),
   );
   let busy = false;
 
@@ -24,8 +24,8 @@ export function createLoadStep(ctx: Ctx): Step {
   input.addEventListener('change', () => { const f = input.files?.[0]; input.value = ''; if (f) load(f); });
 
   async function load(file: File) {
-    if (!/\.mp3$/i.test(file.name) && file.type !== 'audio/mpeg') {
-      toast('Bitte eine MP3-Datei wählen.', 'error');
+    if (!/\.(mp3|wav)$/i.test(file.name) && !/^audio\/(mpeg|wav|x-wav|wave)$/.test(file.type)) {
+      toast('Bitte eine MP3- oder WAV-Datei wählen.', 'error');
       return;
     }
     if (ctx.state.rendered && !ctx.state.uploadedAs && !confirm('Der aktuelle Export wurde noch nicht hochgeladen. Trotzdem neue Datei laden?')) return;

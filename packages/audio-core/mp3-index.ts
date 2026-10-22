@@ -49,6 +49,7 @@ export function parseHeader(b: Uint8Array, i: number): FrameHeader | null {
 }
 
 export interface Mp3Info {
+  kind: 'mp3';
   sampleRate: number;
   channels: number;
   spf: number;
@@ -60,6 +61,8 @@ export interface Mp3Info {
   padding: number;
   /** byte offset of each audio frame, plus the end offset of the last frame (length frames + 1) */
   offsets: Uint32Array;
+  /** decodable samples after the delay (incl. padding): the end of the timeline decodeRange can read */
+  samples: number;
   duration: number;
 }
 
@@ -167,6 +170,9 @@ export class Mp3Indexer {
     offsets[this.count] = this.lastEnd;
     const { sampleRate, channels, spf } = this.first;
     const total = this.count * spf - this.delay - this.padding;
-    return { sampleRate, channels, spf, frames: this.count, delay: this.delay, padding: this.padding, offsets, duration: Math.max(0, total) / sampleRate };
+    return {
+      kind: 'mp3', sampleRate, channels, spf, frames: this.count, delay: this.delay, padding: this.padding, offsets,
+      samples: Math.max(0, this.count * spf - this.delay), duration: Math.max(0, total) / sampleRate,
+    };
   }
 }

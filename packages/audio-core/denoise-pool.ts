@@ -1,6 +1,6 @@
 // Runs the denoising segments in parallel Web Workers, one model per thread (browser only).
 import { PcmStore } from './pcm-store';
-import type { Mp3Info } from './mp3-index';
+import type { AudioInfo } from './decode';
 import type { SegmentRunner } from './pipeline';
 import type { DenoiseJob, DenoiseReply } from './denoise.worker';
 
@@ -14,7 +14,7 @@ export function threadCount(): number {
 }
 
 /** Each worker takes the next segment when it is done with one; aborting via `onProgress` throwing stops all. */
-export function workerRunner(file: File, info: Mp3Info, channels: 1 | 2, module: WebAssembly.Module): SegmentRunner {
+export function workerRunner(file: File, info: AudioInfo, channels: 1 | 2, module: WebAssembly.Module): SegmentRunner {
   return (segments, onProgress) => new Promise<PcmStore[]>((resolve, reject) => {
     const stores: PcmStore[] = new Array(segments.length);
     const done = segments.map(() => 0);

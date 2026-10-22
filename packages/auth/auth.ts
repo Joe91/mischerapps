@@ -23,11 +23,14 @@ export async function logout() {
   location.reload();
 }
 
-/** Resolves with the session once the user is logged in; shows the login form if necessary. */
-export async function ensureLogin(appTitle = 'Mischer-Apps'): Promise<Session> {
+/**
+ * Resolves with the session once the user is logged in; shows the login form if necessary: covering the page,
+ * or inside `host` so that the page stays visible (the home page shows the Einsatzplan to visitors).
+ */
+export async function ensureLogin(appTitle = 'Mischer-Apps', host?: HTMLElement): Promise<Session> {
   for (;;) {
     try {
-      current = await fetchSession() ?? await askForLogin(appTitle);
+      current = await fetchSession() ?? await askForLogin(appTitle, host);
       break;
     } catch {
       await showOffline();
@@ -50,7 +53,7 @@ function showOffline(): Promise<void> {
   });
 }
 
-function askForLogin(appTitle: string): Promise<Session> {
+function askForLogin(appTitle: string, host?: HTMLElement): Promise<Session> {
   return new Promise(resolve => {
     const err = h('p', { class: 'login-error', role: 'alert' });
     const user = h('input', { name: 'username', autocomplete: 'username', required: true, autocapitalize: 'off', spellcheck: 'false' });
@@ -86,8 +89,8 @@ function askForLogin(appTitle: string): Promise<Session> {
       err,
       submit,
     );
-    const overlay = h('div', { class: 'login-overlay' }, form);
-    document.body.append(overlay);
-    user.focus();
+    const overlay = host ? form : h('div', { class: 'login-overlay' }, form);
+    if (host) host.append(form);
+    else { document.body.append(overlay); user.focus(); } // inline: no focus, the keyboard would cover the page on phones
   });
 }

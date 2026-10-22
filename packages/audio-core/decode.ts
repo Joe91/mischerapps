@@ -1,5 +1,9 @@
 import { MPEGDecoder } from 'mpg123-decoder';
 import type { Mp3Info } from './mp3-index';
+import { wavToFloat, type WavInfo } from './wav';
+
+/** What the passes need to know about the loaded file: an indexed MP3 or a WAV. */
+export type AudioInfo = Mp3Info | WavInfo;
 
 /** Random-access byte source: a File/Blob in the browser, a file handle in Node. */
 export interface ByteSource {
@@ -30,10 +34,11 @@ export type BlockFn = (channels: Float32Array[], sampleRate: number) => void | P
 
 /**
  * Decodes the time range [t0, t1) (seconds, gapless timeline) and delivers it block by block.
- * Seeks via the frame index, so only the requested part of the file is read.
+ * Seeks via the frame index (MP3) or the sample offset (WAV), so only the requested part of the file is read.
  */
-export async function decodeRange(src: ByteSource, info: Mp3Info, t0: number, t1: number, onBlock: BlockFn,
+export async function decodeRange(src: ByteSource, info: AudioInfo, t0: number, t1: number, onBlock: BlockFn,
   onProgress?: (p: number) => void): Promise<void> {
+  if (info.kind === 'wav') return readWavRange(src, info, t0, t1, onBlock, onProgress);
   const { sampleRate: sr, spf, delay, offsets, frames } = info;
   const s0 = Math.max(0, Math.round(t0 * sr) + delay);
   const s1 = Math.min(frames * spf, Math.round(t1 * sr) + delay);
@@ -59,6 +64,20 @@ export async function decodeRange(src: ByteSource, info: Mp3Info, t0: number, t1
     }
   } finally {
     dec.free();
+  }
+}
+
+async function readWavRange(src: ByteSource, info: WavInfo, t0: number, t1: number, onBlock: BlockFn,
+  onProgress?: (p: number) => void): Promise<void> {
+  const sr = info.sampleRate;
+  const s0 = Math.max(0, Math.round(t0 * sr)), s1 = Math.min(info.samples, Math.round(t1 * sr));
+  const per = Math.max(1, Math.floor(CHUNK_BYTES / info.blockAlign));
+  for (let s = s0; s < s1; s += per) {
+    const n = Math.min(per, s1 - s);
+    const chs = wavToFloat(info, await src.read(info.dataOffset + s * info.blockAlign, n * info.blockAlign));
+    if (chs[0].length) await onBlock(chs, sr);
+    onProgress?.(Math.min(1, (s + n - s0) / (s1 - s0)));
+    if (chs[0].length < n) break; // file shorter than its header says
   }
 }
 

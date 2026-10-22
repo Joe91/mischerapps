@@ -1,7 +1,8 @@
 // Environment-independent processing passes, shared by the Web Worker and the Node scripts.
 import { createMp3Encoder } from 'wasm-media-encoders';
 import { Mp3Indexer, type Mp3Info } from './mp3-index';
-import { createDecoder, decodeRange, downmix, CHUNK_BYTES, type BlockFn, type ByteSource } from './decode';
+import { createDecoder, decodeRange, downmix, CHUNK_BYTES, type AudioInfo, type BlockFn, type ByteSource } from './decode';
+import { isWav, parseWav, type WavInfo } from './wav';
 import { FeatureExtractor, PeakBuilder, type Features } from './features';
 import { analyze, type AnalysisParams, type AnalysisResult } from './analysis';
 import { LoudnessMeter, TruePeakMeter, integrateSubBlocks } from './loudness';
@@ -25,7 +26,7 @@ export const ENCODER_COMPENSATION_DB = 0.45;
 const tpMarginDb = (e: EncodeOptions) => (e.kbps <= 64 ? 2.0 : 1.5);
 
 export interface AnalyzeOutput {
-  info: Mp3Info;
+  info: AudioInfo;
   features: Features;
   peaks: Float32Array;
   /** K-weighted 100 ms sub-blocks of the mono downmix, for fast loudness estimates of any range */
@@ -33,12 +34,28 @@ export interface AnalyzeOutput {
   result: AnalysisResult;
 }
 
-/** Pass 1: index frames, decode the whole file once, extract features and waveform peaks. */
+/** Pass 1: decode the whole file once (MP3: building the frame index), extract features and waveform peaks. */
 export async function analyzeSource(src: ByteSource, params: Partial<AnalysisParams> = {},
   onProgress?: (p: number) => void): Promise<AnalyzeOutput> {
+  // created with the first block, when the sample rate is known
+  const acc: { fx?: FeatureExtractor; pk?: PeakBuilder; lm?: LoudnessMeter } = {};
+  const push = (mono: Float32Array, sr: number) => {
+    acc.fx ??= new FeatureExtractor(sr); acc.pk ??= new PeakBuilder(sr, PEAKS_PER_SEC); acc.lm ??= new LoudnessMeter(sr, 1);
+    if (mono.length) { acc.pk.push(mono); acc.lm.push([mono]); acc.fx.push(mono); }
+  };
+  const info = isWav(await src.read(0, 12)) ? await analyzeWav(src, push, onProgress) : await analyzeMp3(src, push, onProgress);
+  const { fx, pk, lm } = acc;
+  if (!fx || !pk || !lm || !info.samples) throw new Error('Die Datei enthält keine dekodierbaren Audiodaten.');
+  const features = fx.finish();
+  const result = analyze(features, info.duration, params);
+  return { info, features, peaks: pk.finish(), loudness: lm.subBlocks(), result };
+}
+
+type MonoFn = (mono: Float32Array, sampleRate: number) => void;
+
+async function analyzeMp3(src: ByteSource, push: MonoFn, onProgress?: (p: number) => void): Promise<Mp3Info> {
   const indexer = new Mp3Indexer();
   const dec = await createDecoder();
-  let fx: FeatureExtractor | null = null, pk: PeakBuilder | null = null, lm: LoudnessMeter | null = null;
   let toSkip = -1;
   try {
     for (let off = 0; off < src.size; off += CHUNK_BYTES) {
@@ -46,15 +63,10 @@ export async function analyzeSource(src: ByteSource, params: Partial<AnalysisPar
       indexer.push(bytes);
       const out = dec.decode(bytes);
       if (out.samplesDecoded > 0) {
-        if (!fx) {
-          fx = new FeatureExtractor(out.sampleRate);
-          pk = new PeakBuilder(out.sampleRate, PEAKS_PER_SEC);
-          lm = new LoudnessMeter(out.sampleRate, 1);
-        }
         if (toSkip < 0) toSkip = indexer.delay; // known once the info frame has been parsed
         let mono = downmix(out.channelData);
         if (toSkip > 0) { const k = Math.min(toSkip, mono.length); mono = mono.subarray(k); toSkip -= k; }
-        if (mono.length) { pk!.push(mono); lm!.push([mono]); fx.push(mono); }
+        push(mono, out.sampleRate);
       }
       onProgress?.(Math.min(1, (off + CHUNK_BYTES) / src.size));
       // yield so progress messages and cancellation can get through
@@ -63,11 +75,17 @@ export async function analyzeSource(src: ByteSource, params: Partial<AnalysisPar
   } finally {
     dec.free();
   }
-  const info = indexer.finish();
-  if (!fx || !pk) throw new Error('Die Datei enthält keine dekodierbaren Audiodaten.');
-  const features = fx.finish();
-  const result = analyze(features, info.duration, params);
-  return { info, features, peaks: pk.finish(), loudness: lm!.subBlocks(), result };
+  return indexer.finish();
+}
+
+async function analyzeWav(src: ByteSource, push: MonoFn, onProgress?: (p: number) => void): Promise<WavInfo> {
+  const info = await parseWav(src);
+  let n = 0;
+  await decodeRange(src, info, 0, info.duration, async (chs, sr) => {
+    push(downmix(chs), sr);
+    if (++n % 8 === 0) await new Promise(r => setTimeout(r, 0));
+  }, onProgress);
+  return info;
 }
 
 export interface ProcessOptions {
@@ -113,7 +131,7 @@ export interface RangeReader {
   read(onBlock: BlockFn, onProgress?: (p: number) => void): Promise<void>;
 }
 
-export const mp3Reader = (src: ByteSource, info: Mp3Info, start: number, end: number): RangeReader => ({
+export const sourceReader = (src: ByteSource, info: AudioInfo, start: number, end: number): RangeReader => ({
   sampleRate: info.sampleRate,
   read: (onBlock, onProgress) => decodeRange(src, info, start, end, onBlock, onProgress),
 });
@@ -132,16 +150,16 @@ function denoiseRatio(sr: number) {
 }
 
 /** The range [s0, s1) in source samples, as decodeRange reads it (clamped to the file). */
-function sourceSpan(info: Pick<Mp3Info, 'sampleRate' | 'frames' | 'spf' | 'delay'>, start: number, end: number) {
+function sourceSpan(info: Pick<AudioInfo, 'sampleRate' | 'samples'>, start: number, end: number) {
   const sr = info.sampleRate, s0 = Math.max(0, Math.round(start * sr));
-  return [s0, Math.max(s0, Math.min(Math.round(end * sr), info.frames * info.spf - info.delay))];
+  return [s0, Math.max(s0, Math.min(Math.round(end * sr), info.samples))];
 }
 
 /**
  * The part of a denoised window that belongs to range `o` (inside it): the same samples a pass
  * over `o` alone would give, except that the model is already warmed up at the start.
  */
-export function denoisedPart(reader: RangeReader, info: Mp3Info, window: DenoiseRange, o: DenoiseRange): RangeReader {
+export function denoisedPart(reader: RangeReader, info: AudioInfo, window: DenoiseRange, o: DenoiseRange): RangeReader {
   const { up, down } = denoiseRatio(info.sampleRate);
   const [w0, w1] = sourceSpan(info, window.start, window.end), [s0, s1] = sourceSpan(info, o.start, o.end);
   const from = Math.round(((s0 - w0) * up) / down);
@@ -185,7 +203,7 @@ export interface DenoiseSegment {
  * different speed), none shorter than `minSec`. Boundaries lie on the resampling grid, so each
  * segment's output is sample-aligned with a single pass over the whole range.
  */
-export function planDenoise(info: Pick<Mp3Info, 'sampleRate' | 'frames' | 'spf' | 'delay'>, start: number, end: number,
+export function planDenoise(info: Pick<AudioInfo, 'sampleRate' | 'samples'>, start: number, end: number,
   workers: number, params: Partial<SegmentParams> = {}): { segments: DenoiseSegment[]; fade: number } {
   const p = { ...SEGMENT_PARAMS, ...params }, sr = info.sampleRate;
   const { up, down } = denoiseRatio(sr);
@@ -207,7 +225,7 @@ export function planDenoise(info: Pick<Mp3Info, 'sampleRate' | 'frames' | 'spf' 
 }
 
 /** Denoises one segment at 48 kHz; `onProgress` gets the source samples done. */
-export async function denoiseSegment(src: ByteSource, info: Mp3Info, seg: DenoiseSegment, channels: 1 | 2,
+export async function denoiseSegment(src: ByteSource, info: AudioInfo, seg: DenoiseSegment, channels: 1 | 2,
   module: WebAssembly.Module, onProgress?: (done: number) => void): Promise<PcmStore> {
   const sr = info.sampleRate;
   const dfs = await Promise.all(Array.from({ length: channels }, () => Denoiser.create(module)));
@@ -244,7 +262,7 @@ export async function denoiseSegment(src: ByteSource, info: Mp3Info, seg: Denois
 /** Runs segments (in other threads, or one after another); `onProgress` gets the source samples done in total. */
 export type SegmentRunner = (segments: DenoiseSegment[], onProgress: (done: number) => void) => Promise<PcmStore[]>;
 
-export const inProcess = (src: ByteSource, info: Mp3Info, channels: 1 | 2): SegmentRunner => async (segments, onProgress) => {
+export const inProcess = (src: ByteSource, info: AudioInfo, channels: 1 | 2): SegmentRunner => async (segments, onProgress) => {
   const module = await loadDenoiser(), stores: PcmStore[] = [];
   let done = 0;
   for (const seg of segments) {
@@ -259,7 +277,7 @@ export const inProcess = (src: ByteSource, info: Mp3Info, channels: 1 | 2): Segm
  * one core (≈ 7× real time), so it is split over `workers` threads by `runner`, runs once and is
  * kept in memory for the following passes.
  */
-export async function denoiseRange(src: ByteSource, info: Mp3Info, o: DenoiseRange,
+export async function denoiseRange(src: ByteSource, info: AudioInfo, o: DenoiseRange,
   onProgress?: (p: number) => void, threads: { workers: number; runner: SegmentRunner } | null = null,
   params?: Partial<SegmentParams>): Promise<RangeReader> {
   const plan = planDenoise(info, o.start, o.end, threads?.workers ?? 1, params);

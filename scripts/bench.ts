@@ -12,7 +12,7 @@ import { existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { resolve, basename } from 'node:path';
 import type { ByteSource } from '../packages/audio-core/decode';
-import { analyzeSource, denoiseRange, measure, mp3Reader, render, type ProcessOptions } from '../packages/audio-core/pipeline';
+import { analyzeSource, denoiseRange, measure, sourceReader, render, type ProcessOptions } from '../packages/audio-core/pipeline';
 import { loadDenoiser } from '../packages/denoise/denoise';
 import type { WindowFeatures } from '../packages/audio-core/analysis';
 
@@ -111,7 +111,7 @@ async function renderCheck(src: ByteSource, a: Awaited<ReturnType<typeof analyze
   const info = a.info;
   const o: ProcessOptions = { start, end, channels: 1, targetLufs: -19, truePeakDb: -1.5, highpass: true, compressor: false, denoise, fadeIn: 0.5, fadeOut: 1.5, maxGainDb: 20 };
   const t0 = performance.now();
-  const input = denoise ? await denoiseRange(src, info, o) : mp3Reader(src, info, start, end);
+  const input = denoise ? await denoiseRange(src, info, o) : sourceReader(src, info, start, end);
   if (denoise) console.log(`  Hall/Rauschen reduziert: ${((performance.now() - t0) / 1000).toFixed(1)} s für ${fmt(end - start)}`);
   const t1 = performance.now();
   const m = await measure(input, o, { kbps: 64 }, { loudness: a.loudness });

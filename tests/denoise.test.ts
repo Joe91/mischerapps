@@ -122,7 +122,7 @@ async function readAll(r: RangeReader) {
 }
 
 describe('planDenoise', () => {
-  const info = { sampleRate: 44100, frames: 100000, spf: 1152, delay: 576 };
+  const info = { sampleRate: 44100, samples: 100000 * 1152 - 576 };
   const total = (start: number, end: number) => Math.ceil(((Math.round(end * 44100) - Math.round(start * 44100)) * 160) / 147);
 
   it('splits a long range so that the kept parts add up to one pass over it', () => {

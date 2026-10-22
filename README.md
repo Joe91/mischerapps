@@ -53,6 +53,7 @@ Gespeichert wird alles im Ordner `data` (sichern wie jeden anderen Ordner):
 ```
 data/termine.xlsx          Termine und Antworten (Excel, auch von Hand bearbeitbar)
 data/termine.backup.xlsx   Stand vor dem letzten Hochladen einer Tabelle
+data/einsatzplan.xlsx      Einsatzplan (Mischer, Beamer, Musikteam), so wie der Admin ihn hochgeladen hat
 data/settings.json         gemeinsame Einstellungen (vom Admin)
 data/predigten/            hochgeladene MP3-Dateien
 data/.session-secret       Schlüssel für die Anmelde-Cookies (wird automatisch angelegt)
@@ -137,6 +138,20 @@ oder `Nein`:
 - Wer antwortet, trägt oben sein Kürzel ein (bleibt im Browser). Wer mit welchem Kürzel antwortet, wird nicht geprüft –
   gedacht für ein kleines, vertrautes Team.
 
+## Einsatzplan auf der Startseite
+
+Der Admin lädt auf der Startseite mit *⬆ Plan importieren* die Excel-Tabelle der Gemeinde hoch (z. B. `Musik_Mischer_Beamer.xlsx`).
+Gelesen wird nur das **erste Blatt**: Die Spalten werden an ihrer Überschrift erkannt (`Datum`, `Musikteam`, `Teamleitung`,
+`Mischer`, `Beamer`, optional `Besonderheiten` und `Bemerkungen`), ihre Reihenfolge und weitere Spalten sind egal.
+
+- Termine mit „kein eAg“ (in Musikteam, Teamleitung, Mischer, Beamer oder Besonderheiten) werden ausgeblendet.
+- Zeilen ohne Datum unter den Terminen dürfen eine Legende enthalten: Kürzel und daneben der volle Name (`KL | Udo Klaus`).
+  Angemeldete sehen dann Namen statt Kürzel.
+- **Ohne Anmeldung** zeigt die Startseite die nächsten drei Termine – nur mit Kürzeln, ohne Namen und Bemerkungen.
+  **Angemeldet** stehen die nächsten zwei Termine groß oben, alle weiteren (auch vergangene) hinter *Alle Termine anzeigen*.
+- Ein neuer Import ersetzt den alten Plan. Eine Datei ohne die Spalten „Datum“ und „Mischer“ wird abgelehnt, der alte Plan bleibt.
+  `data/einsatzplan.xlsx` kann auch direkt auf dem NAS ersetzt werden.
+
 ## Lokal entwickeln
 
 ```sh
@@ -162,7 +177,7 @@ docker run --rm -p 9120:8080 -v /tmp/mischer/config:/config:ro -v /tmp/mischer/d
 ```
 
 Die API (alle unter `/api`, Anmeldung per Cookie): `POST login` / `logout`, `GET me`, `GET`/`POST termine`,
-`GET termine/export` und `POST termine/import` (Admin), `GET`/`PUT settings/<app>` (PUT: Admin), `POST upload?name=<datei>.mp3` (die MP3 als Body, `Content-Type: audio/mpeg`; wird direkt auf die Platte geschrieben),
+`GET termine/export` und `POST termine/import` (Admin), `GET plan` (auch ohne Anmeldung, dann gekürzt) und `POST plan/import` (Admin, die xlsx als Body), `GET`/`PUT settings/<app>` (PUT: Admin), `POST upload?name=<datei>.mp3` (die MP3 als Body, `Content-Type: audio/mpeg`; wird direkt auf die Platte geschrieben),
 `GET uploads` (Admin), `GET health`. Fehlercodes des Uploads: `401` nicht angemeldet, `400` ungültiger Name, `409` Datei existiert schon,
 `413` zu groß, `415` keine MP3.
 
@@ -234,7 +249,8 @@ falls gerade keine echte zur Hand ist.
 ## Aufbau
 
 ```
-index.html, src/home.ts      Startseite mit Kacheln aus apps.json
+index.html, src/home.ts      Startseite: Einsatzplan und Kacheln aus apps.json
+packages/plan/               Einsatzplan aus der Excel-Tabelle der Gemeinde lesen
 apps/predigt-schnitt/        Predigt-Schnitt (Schritte unter src/steps/)
 apps/termine/                Termine (src/model.ts: Datenmodell, src/xlsx.ts: Excel-Tabelle, src/api.ts: Zugriff auf den Server)
 packages/audio-core/         Decoder, Frame-Index, Merkmale, Erkennung, Lautheit, DSP, Pipeline, Worker
@@ -244,7 +260,7 @@ packages/upload/             Upload auf den Server und in Cloud-Ordner
 packages/settings/           localStorage-Store mit JSON-Export/-Import, gemeinsame Einstellungen vom Server
 packages/auth/               Anmeldung am Server (Rollen admin / mischer)
 packages/ui-kit/             DOM-Helfer, Styles
-server/                      Server: api.ts (Anmeldung, Termine, Einstellungen, Upload), static.ts, main.ts, config.ts, auth.ts
+server/                      Server: api.ts (Anmeldung, Termine, Einsatzplan, Einstellungen, Upload), static.ts, main.ts, config.ts, auth.ts
 server/cloud/                CORS-Vorlage für Nextcloud (nur für das optionale Cloud-Upload-Ziel)
 Dockerfile, docker-compose.yml, config.example.json   Betrieb auf dem NAS
 scripts/                     bench.ts (Erkennungs-Benchmark), make-synthetic.py, cloud-testserver.sh

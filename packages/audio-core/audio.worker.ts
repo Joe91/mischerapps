@@ -1,8 +1,7 @@
 // One worker for all heavy passes; it keeps the loaded file and its frame index between calls.
-import { blobSource, type ByteSource } from './decode';
-import type { Mp3Info } from './mp3-index';
+import { blobSource, type AudioInfo, type ByteSource } from './decode';
 import {
-  analyzeSource, covers, denoisedPart, denoiseRange, measure, mp3Reader, render,
+  analyzeSource, covers, denoisedPart, denoiseRange, measure, sourceReader, render,
   type DenoiseRange, type EncodeOptions, type MeasureHints, type Measurement, type ProcessOptions, type RangeReader,
 } from './pipeline';
 import type { AnalysisParams } from './analysis';
@@ -30,7 +29,7 @@ const ctx = self as unknown as {
 
 let file: File | null = null;
 let src: ByteSource | null = null;
-let info: Mp3Info | null = null;
+let info: AudioInfo | null = null;
 let hints: MeasureHints = {};
 /** requests in progress; a cancelled one throws at its next progress report */
 const running = new Set<number>();
@@ -60,7 +59,7 @@ async function ensureDenoised(range: DenoiseRange, window: DenoiseRange, onProgr
 /** What measure and render read: the MP3 itself, or the matching part of the denoised window. */
 async function input(o: ProcessOptions, onProgress: (p: number) => void): Promise<RangeReader> {
   const l = loaded();
-  if (!o.denoise) return mp3Reader(l.src, l.info, o.start, o.end);
+  if (!o.denoise) return sourceReader(l.src, l.info, o.start, o.end);
   // normally the page has asked for the window before; otherwise just this range
   const d = await ensureDenoised(o, o, onProgress);
   return denoisedPart(d.reader, l.info, d.window, o);

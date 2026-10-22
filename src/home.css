@@ -8,3 +8,47 @@
 .tile-icon { font-size: 1.8rem; }
 .tile-title { font-weight: 650; font-size: 1.05rem; }
 .tile-desc { color: var(--muted); font-size: .9rem; }
+
+/* not logged in: the plan and the login form, no logout */
+body:not([data-role]) #logout { display: none; }
+.home-login:empty { display: none; }
+.home-login .login-card { margin: 0 auto 1.5rem; }
+
+/* ---- Einsatzplan ---- */
+.plan:empty { display: none; }
+.plan { margin-bottom: 1.5rem; }
+.plan-head { display: flex; align-items: baseline; gap: .75rem; flex-wrap: wrap; margin-bottom: .6rem; }
+.plan-head h2 { margin: 0; }
+.plan-next { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1rem; }
+.plan-card { margin: 0; display: flex; flex-direction: column; gap: .7rem; }
+.plan-card.first { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), var(--shadow); }
+.plan-when { display: flex; align-items: baseline; gap: .6rem; flex-wrap: wrap; }
+.plan-date { font-weight: 650; font-size: 1.05rem; }
+.plan-rel { font-size: .8rem; font-weight: 600; color: var(--accent); background: var(--accent-soft); padding: .05rem .5rem; border-radius: 999px; }
+.role { display: flex; flex-direction: column; min-width: 0; }
+.role-label { font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; }
+.role-name { font-weight: 600; overflow-wrap: anywhere; }
+.role-code { font-size: .8rem; color: var(--muted); }
+.role-main .role-name { font-size: 1.6rem; line-height: 1.2; font-weight: 700; }
+.role.open .role-name, .plan-row-mischer.open { color: var(--warn); }
+.plan-roles { display: grid; grid-template-columns: 1fr 1fr; gap: .75rem; padding-top: .6rem; border-top: 1px solid var(--border); }
+.plan-extra { margin: 0; padding: .4rem .6rem; border-radius: 7px; background: var(--surface-2); font-size: .9rem; }
+
+.plan-toggle { margin-top: .9rem; }
+.plan-list + p { margin-top: .4rem; }
+.plan-list { list-style: none; margin: .9rem 0 0; padding: 0; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); }
+.plan-row { display: grid; grid-template-columns: 8rem 11rem 1fr; gap: .2rem 1rem; padding: .5rem .9rem; border-top: 1px solid var(--border); align-items: baseline; }
+.plan-row:first-child { border-top: 0; }
+.plan-list-head { font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); font-weight: 600; padding-block: .4rem; }
+.plan-row-date { font-variant-numeric: tabular-nums; color: var(--muted); }
+.plan-row-mischer { font-weight: 650; overflow-wrap: anywhere; }
+.plan-row-rest { color: var(--muted); font-size: .9rem; }
+.plan-list.past { opacity: .75; }
+.plan-past { margin-top: .9rem; }
+.plan-past summary { cursor: pointer; color: var(--muted); }
+
+@media (max-width: 640px) {
+  .plan-row { grid-template-columns: 6.5rem 1fr; }
+  .plan-row-rest { grid-column: 2; }
+  .plan-list-head span:last-child { display: none; }
+}

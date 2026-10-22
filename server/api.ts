@@ -1,4 +1,4 @@
-// The HTTP API under /api: login, Termine, shared settings and MP3 upload.
+// The HTTP API under /api: login, Termine, Einsatzplan, shared settings and MP3 upload.
 // Used by server/main.ts (production) and dev-server.ts (npm run dev / preview).
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { randomBytes } from 'node:crypto';
@@ -6,10 +6,12 @@ import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { mkdir, open, readdir, stat, unlink } from 'node:fs/promises';
 import { pipeline } from 'node:stream/promises';
 import { join } from 'node:path';
-import { OpError, type Op } from '../apps/termine/src/model';
+import { OpError, isoDate, type Op } from '../apps/termine/src/model';
+import { publicPlan, type PlanResponse } from '../packages/plan/plan';
 import { XLSX_MIME } from '../apps/termine/src/xlsx';
 import { LoginLimiter, signSession, verifyPassword, verifySession } from './auth';
 import { ROLES, type Role, type ServerConfig } from './config';
+import { PlanFormatError, PlanStore } from './plan-store';
 import { DamagedSettings, SharedSettings } from './shared-settings';
 import { InvalidSpreadsheet, TermineStore } from './termine-store';
 
@@ -68,6 +70,7 @@ export function createApi(cfg: ServerConfig) {
   const secret = secretFor(cfg);
   const termine = new TermineStore(cfg.dataDir);
   const shared = new SharedSettings(cfg.dataDir);
+  const plan = new PlanStore(cfg.dataDir);
   const limiter = new LoginLimiter();
   const maxUpload = cfg.maxUploadMb * 1024 * 1024;
   const predigten = join(cfg.dataDir, 'predigten');
@@ -173,6 +176,12 @@ export function createApi(cfg: ServerConfig) {
     if (path === '/api/logout' && post) return send(res, 204, '', { 'Set-Cookie': cookieHeader(req, '', 0) });
 
     const role = sessionOf(req);
+    // the Einsatzplan is the only content without login: visitors see just the next few dates (see publicPlan)
+    if (path === '/api/plan' && method === 'GET') {
+      const stored = await plan.read();
+      const value = stored ? (role ? stored.plan : publicPlan(stored.plan, isoDate(new Date()))) : { entries: [], names: {} };
+      return sendJson(res, 200, { ...value, updated: stored?.updated ?? null, public: !role } satisfies PlanResponse);
+    }
     if (!role) throw new HttpError(401, 'unauthorized');
     const admin = () => { if (role !== 'admin') throw new HttpError(403, 'forbidden'); };
 
@@ -208,6 +217,17 @@ export function createApi(cfg: ServerConfig) {
         throw e;
       }
       log(`termine imported: ${result.dates} dates, ${result.skipped} rows skipped`);
+      return sendJson(res, 200, result);
+    }
+
+    if (path === '/api/plan/import' && post) {
+      admin();
+      let result;
+      try { result = await plan.importXlsx(await readBody(req, 10 * 1024 * 1024)); } catch (e) {
+        if (e instanceof PlanFormatError) throw new HttpError(400, e.message);
+        throw e;
+      }
+      log(`plan imported: ${result.dates} dates, ${result.hidden} without service hidden`);
       return sendJson(res, 200, result);
     }
 
@@ -250,6 +270,7 @@ export function createApi(cfg: ServerConfig) {
       if (res.headersSent) { res.end(); return true; }
       if (e instanceof HttpError) sendText(res, e.status, e.message);
       else if (e instanceof OpError) sendText(res, 400, e.message);
+      else if (e instanceof PlanFormatError) { console.error(`einsatzplan.xlsx: ${e.message}`); sendText(res, 500, 'einsatzplan.xlsx is damaged'); }
       else if (e instanceof DamagedSettings) { console.error(e.message); sendText(res, 500, 'settings.json is damaged'); }
       else { console.error(e); sendText(res, 500, 'server error'); }
     }

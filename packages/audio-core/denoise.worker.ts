@@ -1,10 +1,9 @@
 // Sub-worker of audio.worker.ts: denoises one segment of the cut range per job (see planDenoise).
-import { blobSource } from './decode';
+import { blobSource, type AudioInfo } from './decode';
 import { denoiseSegment, type DenoiseSegment } from './pipeline';
-import type { Mp3Info } from './mp3-index';
 import type { PcmDump } from './pcm-store';
 
-export interface DenoiseJob { file: File; info: Mp3Info; seg: DenoiseSegment; channels: 1 | 2; module: WebAssembly.Module; }
+export interface DenoiseJob { file: File; info: AudioInfo; seg: DenoiseSegment; channels: 1 | 2; module: WebAssembly.Module; }
 
 export type DenoiseReply =
   | { type: 'progress'; done: number }

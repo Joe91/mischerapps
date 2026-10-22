@@ -9,6 +9,8 @@ import { createStatic } from '../server/static';
 import { hashPassword, LoginLimiter, signSession, verifyPassword, verifySession } from '../server/auth';
 import { parseConfig, ConfigError, type ServerConfig } from '../server/config';
 import { readTermineXlsx, writeTermineXlsx } from '../apps/termine/src/xlsx';
+import { isoDate } from '../apps/termine/src/model';
+import writeExcelFile from 'write-excel-file/universal';
 
 let server: Server, base: string, dir: string;
 const cfg = (): ServerConfig => ({
@@ -184,6 +186,56 @@ describe('termine', () => {
     expect((await fetch(`${base}/api/termine`, json(a, 'POST', { action: 'vote', date: '2030-01-06', sign: 'JD', answer: 'yes' }))).status).toBe(500);
     expect((await readFile(file)).toString()).toBe('not a spreadsheet');
     await writeFile(file, before);
+  });
+});
+
+describe('einsatzplan', () => {
+  const inDays = (n: number) => { const d = new Date(); d.setDate(d.getDate() + n); return isoDate(d); };
+  const sheet = async () => Buffer.from(await (await writeExcelFile([
+    ['Datum', 'Musikteam', 'Teamleitung', 'Mischer', 'Name', 'Beamer', 'Bemerkungen'],
+    [inDays(-7), 'A-Team', 'Anna', 'KL', null, 'MS', null],
+    [inDays(0), 'H-Team', 'Berta', 'AS', null, 'RR', 'Mikro 3 defekt'],
+    [inDays(5), 'kein eAg', null, null, null, null, null],
+    [inDays(7), 'J-Team', 'Carla', 'KL', null, 'MS', null],
+    [inDays(14), 'N-Team', 'Dora', 'AS', null, 'RR', null],
+    [inDays(21), 'A-Team', 'Anna', 'KL', null, 'MS', null],
+    [null, null, null, 'KL', 'Karl Lang', null, null],
+  ] as never).toBlob()).arrayBuffer());
+  const plan = async (cookie = '') => (await fetch(`${base}/api/plan`, cookie ? as(cookie) : {})).json();
+
+  it('is empty until the admin imports a spreadsheet (only the admin may)', async () => {
+    const m = (await login('mischer', 'mischer-password')).cookie, a = (await login('admin', 'admin-password')).cookie;
+    expect(await plan()).toEqual({ entries: [], names: {}, updated: null, public: true });
+    expect((await fetch(`${base}/api/plan/import`, { method: 'POST', body: await sheet() })).status).toBe(401);
+    expect((await fetch(`${base}/api/plan/import`, { method: 'POST', headers: { Cookie: m }, body: await sheet() })).status).toBe(403);
+    expect((await fetch(`${base}/api/plan/import`, { method: 'POST', headers: { Cookie: a }, body: 'garbage' })).status).toBe(400);
+    const upload = await sheet();
+    const ok = await fetch(`${base}/api/plan/import`, { method: 'POST', headers: { Cookie: a }, body: upload });
+    expect(await ok.json()).toEqual({ dates: 5, hidden: 1 });
+    expect((await readFile(join(dir, 'data/einsatzplan.xlsx'))).equals(upload)).toBe(true); // stored as uploaded
+  });
+
+  it('shows visitors the next three dates without names and remarks, logged-in users everything', async () => {
+    const visitor = await plan();
+    expect(visitor.public).toBe(true);
+    expect(visitor.names).toEqual({});
+    expect(visitor.entries.map((e: { date: string }) => e.date)).toEqual([inDays(0), inDays(7), inDays(14)]);
+    expect(visitor.entries[0]).toMatchObject({ mischer: 'AS', note: '' });
+
+    const m = (await login('mischer', 'mischer-password')).cookie;
+    const member = await plan(m);
+    expect(member.public).toBe(false);
+    expect(member.names).toEqual({ KL: 'Karl Lang' });
+    expect(member.entries.map((e: { date: string }) => e.date)).toEqual([inDays(-7), inDays(0), inDays(7), inDays(14), inDays(21)]);
+    expect(member.entries[1].note).toBe('Mikro 3 defekt');
+    expect(Date.parse(member.updated)).toBeGreaterThan(0);
+  });
+
+  it('keeps the old plan if an upload cannot be read', async () => {
+    const a = (await login('admin', 'admin-password')).cookie;
+    const wrong = Buffer.from(await (await writeExcelFile([['Datum', 'Anlass'], [inDays(1), 'x']] as never).toBlob()).arrayBuffer());
+    expect((await fetch(`${base}/api/plan/import`, { method: 'POST', headers: { Cookie: a }, body: wrong })).status).toBe(400);
+    expect((await plan(a)).entries).toHaveLength(5);
   });
 });
 

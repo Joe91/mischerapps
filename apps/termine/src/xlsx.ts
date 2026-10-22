@@ -62,7 +62,7 @@ export async function writeTermineXlsx(data: TermineData): Promise<Blob> {
 const pad = (n: number) => String(n).padStart(2, '0');
 
 /** ISO date from a date cell, an Excel serial number, "25.10.2026" or "2026-10-25"; null if it is none of those. */
-function toIsoDate(v: unknown): string | null {
+export function toIsoDate(v: unknown): string | null {
   let iso: string | null = null;
   if (v instanceof Date) iso = `${v.getUTCFullYear()}-${pad(v.getUTCMonth() + 1)}-${pad(v.getUTCDate())}`;
   else if (typeof v === 'number') return toIsoDate(new Date(Date.UTC(1899, 11, 30) + Math.floor(v) * 86_400_000));
@@ -85,7 +85,7 @@ function toTime(v: unknown): string {
   return toText(v);
 }
 
-function toText(v: unknown): string {
+export function toText(v: unknown): string {
   if (v === null || v === undefined) return '';
   if (v instanceof Date) return toIsoDate(v) ?? '';
   return String(v).trim();
