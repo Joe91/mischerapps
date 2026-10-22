@@ -151,6 +151,9 @@ Gelesen wird nur das **erste Blatt**: Die Spalten werden an ihrer Überschrift e
   **Angemeldet** stehen die nächsten zwei Termine groß oben, alle weiteren (auch vergangene) hinter *Alle Termine anzeigen*.
 - Ein neuer Import ersetzt den alten Plan. Eine Datei ohne die Spalten „Datum“ und „Mischer“ wird abgelehnt, der alte Plan bleibt.
   `data/einsatzplan.xlsx` kann auch direkt auf dem NAS ersetzt werden.
+- In der App **Termine** steht bei einem Termin ohne eigenes „Eingeteilt“ der Mischer aus dem Einsatzplan (markiert mit
+  *laut Einsatzplan*; ★ und Absage-Warnung gelten dafür genauso). Er wird nicht in `termine.xlsx` gespeichert, folgt also einem neu
+  importierten Plan. Ein eigener Eintrag unter *Bearbeiten* hat Vorrang; das Feld leeren schaltet zurück auf den Plan.
 
 ## Lokal entwickeln
 
@@ -189,8 +192,8 @@ Die API (alle unter `/api`, Anmeldung per Cookie): `POST login` / `logout`, `GET
    Alternativ-Vorschläge, Vorhören, Feinjustieren (Tastatur: Leertaste, S/E, ←/→, Umschalt, P).
 3. **Export** – Titel, Prediger, Datum, Bibelstelle und Dateiname eintragen (Schema `predigt-eag-{jjmmdd}`,
    z. B. `predigt-eag-260712.mp3`). Lautheit und Klang werden automatisch nach den Voreinstellungen des Admins
-   angepasst (Standard: −19 LUFS, Hochpass 80 Hz, sanfte Kompression 2:1, „Sprache hoch“ = Mono 96 kbps,
-   0,5 s Ausblenden – die Predigt endet meist mit „Amen“; Hall & Rauschen reduzieren ist wählbar);
+   angepasst (Standard: −19 LUFS, höchstens +30 dB Anhebung, Hochpass 80 Hz, sanfte Kompression 2:1, Hall &
+   Rauschen reduzieren, „Sprache hoch“ = Mono 96 kbps, 0,5 s Ausblenden – die Predigt endet meist mit „Amen“);
    Messung und MP3-Kodierung laufen schon im Hintergrund, während die Angaben ausgefüllt werden – „MP3 exportieren“
    schreibt dann nur noch die Tags (Titel, Prediger …) hinein und ist sofort fertig. **⚙ Erweitert** zeigt
    Messwerte und erlaubt, Zielwert, Format, Ein-/Ausblenden, Hochpass, Kompression und Hall-Reduzierung für diese eine Aufnahme
@@ -199,7 +202,7 @@ Die API (alle unter `/api`, Anmeldung per Cookie): `POST login` / `logout`, `GET
    (die Eingangslautheit ist aus der Analyse bekannt, der Limiter läuft parallel mit drei Verstärkungen,
    die passende wird interpoliert). MP3 per LAME/WASM (CBR) mit ID3-Tags; die angezeigte Lautheit wird am
    fertigen MP3 gemessen.
-   **Hall & Rauschen reduzieren** (Standard aus): KI-Filter [DeepFilterNet3](https://github.com/Rikorose/DeepFilterNet)
+   **Hall & Rauschen reduzieren** (Standard an): KI-Filter [DeepFilterNet3](https://github.com/Rikorose/DeepFilterNet)
    (MIT/Apache-2.0) als WebAssembly im Browser, nichts zu installieren. Senkt Nachhall und Hintergrundrauschen
    um höchstens 12 dB, so bleibt es natürlich. Die Aufnahme wird in Abschnitte geteilt, die parallel in
    mehreren Workern laufen (je 10 s Vorlauf, 1 s Überblendung – vom Durchgang am Stück nicht zu unterscheiden):
