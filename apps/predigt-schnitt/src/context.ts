@@ -1,5 +1,5 @@
 import type { AudioWorkerClient } from '../../../packages/audio-core/client';
-import type { AnalyzeOutput, EncodeOptions, Measurement, ProcessOptions, RenderResult } from '../../../packages/audio-core/pipeline';
+import type { AnalyzeOutput, DenoiseRange, EncodeOptions, Measurement, ProcessOptions, RenderResult } from '../../../packages/audio-core/pipeline';
 import { CHOICE_KEYS, EXPORT_PRESETS, LOUDNESS_PRESETS, type Choices, type Settings } from './settings';
 import type { Meta } from './naming';
 
@@ -33,8 +33,8 @@ export interface AppState {
   overrides: Partial<Choices>;
   measurement: Measurement | null;
   measurementKey: string;
-  /** denoiseKey() of the denoised copy the worker holds ('' = none) */
-  denoisedKey: string;
+  /** the window the worker holds denoised; serves every cut range inside it */
+  denoised: DenoiseRange | null;
   prepared: Prepared | null;
   rendered: Rendered | null;
   uploadedAs: string | null;

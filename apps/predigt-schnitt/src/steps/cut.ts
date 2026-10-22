@@ -4,6 +4,7 @@ import TimelinePlugin from 'wavesurfer.js/plugins/timeline';
 import { h, fmtTime, parseTime } from '../../../../packages/ui-kit/dom';
 import type { AnalyzeOutput } from '../../../../packages/audio-core/pipeline';
 import { STEP, type Ctx, type Step } from '../context';
+import { prefetchDenoising } from './prepare';
 
 type Which = 'start' | 'end';
 const css = (name: string) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -64,6 +65,14 @@ export function createCutStep(ctx: Ctx): Step {
     endRow.row.classList.toggle('active', w === 'end');
   }
 
+  /** Denoising starts here already (if switched on); after marker changes once they have settled. */
+  let prefetchTimer = 0;
+  function markersChanged() {
+    ctx.changed();
+    clearTimeout(prefetchTimer);
+    prefetchTimer = window.setTimeout(() => prefetchDenoising(ctx), 2000);
+  }
+
   function setMarker(which: Which, t: number, revealIt: boolean) {
     const a = ctx.state.analysis;
     if (!a) return;
@@ -73,7 +82,7 @@ export function createCutStep(ctx: Ctx): Step {
     region?.setOptions({ start: ctx.state.start, end: ctx.state.end });
     if (revealIt) reveal(get(which));
     refresh();
-    ctx.changed();
+    markersChanged();
   }
 
   function setRange(start: number, end: number) {
@@ -82,7 +91,7 @@ export function createCutStep(ctx: Ctx): Step {
     region?.setOptions({ start, end });
     reveal(start);
     refresh();
-    ctx.changed();
+    markersChanged();
   }
 
   function reveal(t: number) {
@@ -202,7 +211,7 @@ export function createCutStep(ctx: Ctx): Step {
       ctx.state.end = r.end;
       if (side) setActive(side === 'start' ? 'start' : 'end');
       refresh();
-      ctx.changed();
+      markersChanged();
     });
     ws.on('timeupdate', t => { timeLabel.textContent = `${fmtTime(t)} / ${fmtTime(a.info.duration, false)}`; drawOverview(); });
     ws.on('play', () => { playBtn.textContent = '❚❚'; });
@@ -288,9 +297,11 @@ export function createCutStep(ctx: Ctx): Step {
       else { region?.setOptions({ start: ctx.state.start, end: ctx.state.end }); refresh(); }
       document.addEventListener('keydown', onKey);
       window.addEventListener('resize', onResize);
+      prefetchDenoising(ctx);
     },
     leave() {
       ws?.pause();
+      clearTimeout(prefetchTimer); // the export step asks for what it needs itself
       document.removeEventListener('keydown', onKey);
       window.removeEventListener('resize', onResize);
     },

@@ -1,5 +1,5 @@
 import { h, fmtDb, fmtNum, progressBar } from '../../../../packages/ui-kit/dom';
-import { denoiseKey, type Measurement, type ProcessOptions } from '../../../../packages/audio-core/pipeline';
+import { covers, type DenoiseRange, type Measurement, type ProcessOptions } from '../../../../packages/audio-core/pipeline';
 import { choices, processOptions, encodeOptions, measurementKey, type Ctx, type Prepared } from '../context';
 import { EXPORT_PRESETS, LOUDNESS_PRESETS, type Choices, type ExportPresetId, type LoudnessPresetId } from '../settings';
 
@@ -45,39 +45,56 @@ const measureRunner = serialRunner<Measurement>();
 const prepareRunner = serialRunner<Prepared>();
 
 /**
- * Denoising the cut range in the worker: the longest step (≈ 35× real time on 6 cores, 7× on one),
- * measuring and encoding run at 100× and more. It is a job of its own, so an option change that keeps range and channels
- * (compression, loudness, …) carries on with it instead of starting over.
+ * Denoising in the worker: the longest step (≈ 35× real time on 6 cores, 7× on one), measuring and
+ * encoding run at 100× and more. It is a job of its own, so an option change that keeps the channels
+ * (compression, loudness, …) carries on with it instead of starting over. It covers a window a bit
+ * larger than the cut, starts already in the cut step (prefetchDenoising), and the markers can move
+ * within the window without denoising again.
  */
-let denoiseJob: { key: string; analysis: unknown; promise: Promise<void>; listeners: Set<(p: number) => void>; abort: AbortController } | null = null;
+let denoiseJob: { window: DenoiseRange; analysis: unknown; promise: Promise<void>; listeners: Set<(p: number) => void>; abort: AbortController } | null = null;
+
+/** Seconds denoised beyond each marker, so that small corrections need no new pass (costs ~2 s each way). */
+const DENOISE_MARGIN = 30;
+const windowFor = (o: DenoiseRange): DenoiseRange =>
+  ({ start: Math.max(0, o.start - DENOISE_MARGIN), end: o.end + DENOISE_MARGIN, channels: o.channels });
 
 const DENOISE_LABEL = 'Hall und Rauschen werden reduziert …';
 
-const denoisePending = (ctx: Ctx, o: ProcessOptions) => o.denoise && ctx.state.denoisedKey !== denoiseKey(o);
+const denoisePending = (ctx: Ctx, o: ProcessOptions) => o.denoise && !(ctx.state.denoised && covers(ctx.state.denoised, o));
 
-function ensureDenoised(ctx: Ctx, o: ProcessOptions, onProgress: (p: number) => void): Promise<void> {
-  const key = denoiseKey(o), analysis = ctx.state.analysis;
-  if (ctx.state.denoisedKey === key) return Promise.resolve();
-  if (denoiseJob && denoiseJob.key === key && denoiseJob.analysis === analysis) {
+function ensureDenoised(ctx: Ctx, o: DenoiseRange, onProgress: (p: number) => void): Promise<void> {
+  const analysis = ctx.state.analysis;
+  if (ctx.state.denoised && covers(ctx.state.denoised, o)) return Promise.resolve();
+  if (denoiseJob && denoiseJob.analysis === analysis && covers(denoiseJob.window, o)) {
     denoiseJob.listeners.add(onProgress);
     return denoiseJob.promise;
   }
   denoiseJob?.abort.abort(outdated());
-  ctx.state.denoisedKey = ''; // the worker drops its copy when it starts the new one
-  const listeners = new Set([onProgress]), abort = new AbortController();
-  const promise = ctx.worker.denoise(o, p => listeners.forEach(f => f(p)), abort.signal).then(() => {
-    if (ctx.state.analysis === analysis) ctx.state.denoisedKey = key;
+  ctx.state.denoised = null; // the worker drops its copy when it starts the new one
+  const window = windowFor(o), listeners = new Set([onProgress]), abort = new AbortController();
+  const promise = ctx.worker.denoise(window, p => listeners.forEach(f => f(p)), abort.signal).then(() => {
+    if (ctx.state.analysis === analysis) ctx.state.denoised = window;
   }).finally(() => { if (denoiseJob?.promise === promise) denoiseJob = null; });
-  denoiseJob = { key, analysis, promise, listeners, abort };
+  denoiseJob = { window, analysis, promise, listeners, abort };
   return promise;
 }
 
-/** Stops denoising the current options do not need (switched off, other range), so the worker is free. */
+/** Stops denoising the current options do not need (switched off, cut outside the window), so the worker is free. */
 function dropUnneededDenoising(ctx: Ctx, o: ProcessOptions) {
-  if (denoiseJob && (!o.denoise || denoiseJob.key !== denoiseKey(o) || denoiseJob.analysis !== ctx.state.analysis)) {
+  if (denoiseJob && (!o.denoise || !covers(denoiseJob.window, o) || denoiseJob.analysis !== ctx.state.analysis)) {
     denoiseJob.abort.abort(outdated());
     denoiseJob = null;
   }
+}
+
+/**
+ * Starts denoising the current cut in the background while it is still being set, so that the
+ * export is (nearly) ready when the details are filled in. Does nothing when the option is off or
+ * the cut lies inside the window already denoised (or being denoised).
+ */
+export function prefetchDenoising(ctx: Ctx) {
+  const o = processOptions(ctx);
+  if (o.denoise && ctx.state.analysis && o.end > o.start) ensureDenoised(ctx, o, () => undefined).catch(() => undefined);
 }
 
 /** Gain, compression and limiter settings for the current options (cached per recording and options). */

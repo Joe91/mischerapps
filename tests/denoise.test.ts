@@ -4,7 +4,7 @@ import { createMp3Encoder } from 'wasm-media-encoders';
 import { Resampler } from '../packages/audio-core/dsp';
 import { PcmStore, readJoined } from '../packages/audio-core/pcm-store';
 import { Mp3Indexer } from '../packages/audio-core/mp3-index';
-import { denoiseRange, inProcess, planDenoise, type RangeReader } from '../packages/audio-core/pipeline';
+import { covers, denoisedPart, denoiseRange, inProcess, planDenoise, type RangeReader } from '../packages/audio-core/pipeline';
 import { Denoiser, loadDenoiser } from '../packages/denoise/denoise';
 
 const wasm = readFileSync(new URL('../packages/denoise/df3.wasm', import.meta.url));
@@ -196,5 +196,24 @@ describe('denoiseRange in segments', () => {
       join += seg.keep - (join ? fade : 0);
       expect(peak(diff.subarray(join - fade, join + 2400))).toBeLessThan(0.02 * peak(whole));
     }
+  }, 30000);
+});
+
+describe('denoisedPart', () => {
+  it('serves a cut inside a denoised window like a pass over the cut itself', async () => {
+    await loadDenoiser(wasm);
+    const sr = 44100, { info, src } = await mp3Of(syllables(sr, 16), sr);
+    const window = { start: 0.3, end: 15.7, channels: 1 as const }, cut = { start: 4.37, end: 12.81, channels: 1 as const };
+    expect(covers(window, cut)).toBe(true);
+    expect(covers(window, { ...cut, end: 15.8 })).toBe(false);
+    expect(covers(window, { ...cut, channels: 2 })).toBe(false);
+    const part = (await readAll(denoisedPart(await denoiseRange(src, info, window), info, window, cut)))[0];
+    const direct = (await readAll(await denoiseRange(src, info, cut)))[0];
+    expect(part.length).toBe(direct.length);
+    expect(part.length).toBe(Math.ceil(((Math.round(12.81 * sr) - Math.round(4.37 * sr)) * 160) / 147));
+    // same timing; once the direct pass has warmed up, the same signal
+    const tail = (x: Float32Array) => x.subarray(3 * 48000);
+    const diff = tail(part).map((v, i) => v - tail(direct)[i]);
+    expect(20 * Math.log10(rms(diff) / rms(tail(direct)))).toBeLessThan(-30);
   }, 30000);
 });

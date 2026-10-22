@@ -1,6 +1,6 @@
 // Main-thread wrapper around audio.worker.ts with promise-based calls and progress callbacks.
 import type { WorkerRequest, WorkerResponse } from './audio.worker';
-import type { AnalyzeOutput, EncodeOptions, Measurement, ProcessOptions, RenderResult } from './pipeline';
+import type { AnalyzeOutput, DenoiseRange, EncodeOptions, Measurement, ProcessOptions, RenderResult } from './pipeline';
 import type { AnalysisParams } from './analysis';
 
 type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void; onProgress?: (p: number) => void };
@@ -55,9 +55,9 @@ export class AudioWorkerClient {
   render(opts: ProcessOptions, measurement: Measurement, encode: EncodeOptions, onProgress?: (p: number) => void, signal?: AbortSignal) {
     return this.call<RenderResult>({ type: 'render', opts, measurement, encode }, onProgress, signal);
   }
-  /** Denoises the cut range (minutes); measure and render then read the denoised copy. */
-  denoise(opts: ProcessOptions, onProgress?: (p: number) => void, signal?: AbortSignal) {
-    return this.call<null>({ type: 'denoise', opts }, onProgress, signal);
+  /** Denoises `window`; measure and render then read the denoised copy for any cut range inside it. */
+  denoise(window: DenoiseRange, onProgress?: (p: number) => void, signal?: AbortSignal) {
+    return this.call<null>({ type: 'denoise', window }, onProgress, signal);
   }
 
   /** Aborts all running work by restarting the worker. */

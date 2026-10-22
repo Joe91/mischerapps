@@ -189,8 +189,10 @@ Die API (alle unter `/api`, Anmeldung per Cookie): `POST login` / `logout`, `GET
    um höchstens 12 dB, so bleibt es natürlich. Die Aufnahme wird in Abschnitte geteilt, die parallel in
    mehreren Workern laufen (je 10 s Vorlauf, 1 s Überblendung – vom Durchgang am Stück nicht zu unterscheiden):
    6-Kern-PC ≈ 35× Echtzeit (30 min Predigt ≈ 1 min), ein Kern ≈ 7×. Braucht einmalig ~11 MB Download sowie
-   ~250 MB Arbeitsspeicher pro 30 min (Mono; Stereo etwa doppelt) und ~35 MB je Worker. Das Ergebnis wird für Messung und Kodierung wiederverwendet; ändern sich nur Lautheit
-   oder Kompression, wird nicht neu gefiltert.
+   ~250 MB Arbeitsspeicher pro 30 min (Mono; Stereo etwa doppelt) und ~35 MB je Worker.
+   Das Ergebnis wird für Messung und Kodierung wiederverwendet; ändern sich nur Lautheit oder Kompression, wird
+   nicht neu gefiltert. Ist die Option an, startet der Filter schon im Schnitt-Schritt im Hintergrund (Vorschlag
+   ± 30 s); Marker innerhalb dieses Bereichs zu verschieben braucht keinen neuen Durchgang.
 4. **Upload** – auf das NAS (Ordner `predigten` im Datenverzeichnis), mit Fortschritt; alternativ Herunterladen.
    Vorhandene Dateien werden nie überschrieben. Der Admin kann zusätzlich einen Cloud-Ordner als Ziel eintragen.
 

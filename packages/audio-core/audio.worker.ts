@@ -2,8 +2,8 @@
 import { blobSource, type ByteSource } from './decode';
 import type { Mp3Info } from './mp3-index';
 import {
-  analyzeSource, denoiseKey, denoiseRange, measure, mp3Reader, render,
-  type EncodeOptions, type MeasureHints, type Measurement, type ProcessOptions, type RangeReader,
+  analyzeSource, covers, denoisedPart, denoiseRange, measure, mp3Reader, render,
+  type DenoiseRange, type EncodeOptions, type MeasureHints, type Measurement, type ProcessOptions, type RangeReader,
 } from './pipeline';
 import type { AnalysisParams } from './analysis';
 import { threadCount, workerRunner } from './denoise-pool';
@@ -13,7 +13,8 @@ export type WorkerRequest =
   | { id: number; type: 'analyze'; file: File; params: Partial<AnalysisParams> }
   | { id: number; type: 'measure'; opts: ProcessOptions; encode: EncodeOptions }
   | { id: number; type: 'render'; opts: ProcessOptions; measurement: Measurement; encode: EncodeOptions }
-  | { id: number; type: 'denoise'; opts: ProcessOptions }
+  /** denoises `window` (usually the cut range plus a margin) for the following measure/render calls */
+  | { id: number; type: 'denoise'; window: DenoiseRange }
   /** stops the request `target` at its next progress report; no response */
   | { id: number; type: 'cancel'; target: number };
 
@@ -35,27 +36,34 @@ let hints: MeasureHints = {};
 const running = new Set<number>();
 const cancelled = new Set<number>();
 
-/** the denoised cut range, reused by all passes until the range, channels or file change */
-let denoised: { key: string; reader: RangeReader } | null = null;
+/** the denoised window, reused by all passes for ranges inside it until another window or file is needed */
+let denoised: { window: DenoiseRange; reader: RangeReader } | null = null;
 
 function loaded() {
   if (!file || !src || !info) throw new Error('Keine Datei geladen.');
   return { file, src, info };
 }
 
-/** What measure and render read: the MP3 itself, or its denoised copy (made first if needed). */
-async function input(o: ProcessOptions, onProgress: (p: number) => void): Promise<RangeReader> {
+/** Makes sure a denoised window covering `range` exists; denoises `window` if not. */
+async function ensureDenoised(range: DenoiseRange, window: DenoiseRange, onProgress: (p: number) => void) {
   const l = loaded();
-  if (!o.denoise) return mp3Reader(l.src, l.info, o.start, o.end);
-  const key = denoiseKey(o);
-  if (denoised?.key === key) return denoised.reader;
+  if (denoised && covers(denoised.window, range)) return denoised;
   denoised = null; // free the old copy before making the new one
   // in parallel sub-workers; browsers without workers in workers run it here on one core
   const threads = typeof Worker === 'undefined' ? null
-    : { workers: threadCount(), runner: workerRunner(l.file, l.info, o.channels, await loadDenoiser()) };
-  const reader = await denoiseRange(l.src, l.info, o, onProgress, threads);
-  if (src === l.src) denoised = { key, reader }; // unless another file was loaded meanwhile
-  return reader;
+    : { workers: threadCount(), runner: workerRunner(l.file, l.info, window.channels, await loadDenoiser()) };
+  const made = { window, reader: await denoiseRange(l.src, l.info, window, onProgress, threads) };
+  if (src === l.src) denoised = made; // unless another file was loaded meanwhile
+  return made;
+}
+
+/** What measure and render read: the MP3 itself, or the matching part of the denoised window. */
+async function input(o: ProcessOptions, onProgress: (p: number) => void): Promise<RangeReader> {
+  const l = loaded();
+  if (!o.denoise) return mp3Reader(l.src, l.info, o.start, o.end);
+  // normally the page has asked for the window before; otherwise just this range
+  const d = await ensureDenoised(o, o, onProgress);
+  return denoisedPart(d.reader, l.info, d.window, o);
 }
 
 ctx.onmessage = async (e) => {
@@ -95,7 +103,7 @@ ctx.onmessage = async (e) => {
         break;
       }
       case 'denoise': {
-        await input(req.opts, progress('denoise'));
+        await ensureDenoised(req.window, req.window, progress('denoise'));
         ctx.postMessage({ id: req.id, type: 'result', data: null });
         break;
       }

@@ -118,8 +118,49 @@ export const mp3Reader = (src: ByteSource, info: Mp3Info, start: number, end: nu
   read: (onBlock, onProgress) => decodeRange(src, info, start, end, onBlock, onProgress),
 });
 
-/** What the denoised copy depends on: other options can change without denoising again. */
-export const denoiseKey = (o: Pick<ProcessOptions, 'start' | 'end' | 'channels'>) => JSON.stringify([o.start, o.end, o.channels]);
+/** What a denoised copy depends on: other options can change without denoising again. */
+export type DenoiseRange = Pick<ProcessOptions, 'start' | 'end' | 'channels'>;
+
+/** A denoised `window` can serve every range inside it (see denoisedPart). */
+export const covers = (window: DenoiseRange, o: DenoiseRange) =>
+  window.channels === o.channels && window.start <= o.start && o.end <= window.end;
+
+/** 48 kHz : source rate as integers, e.g. 160 : 147 for 44.1 kHz (exact sample counts, no rounding). */
+function denoiseRatio(sr: number) {
+  const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a);
+  return { up: DENOISE_RATE / gcd(sr, DENOISE_RATE), down: sr / gcd(sr, DENOISE_RATE) };
+}
+
+/** The range [s0, s1) in source samples, as decodeRange reads it (clamped to the file). */
+function sourceSpan(info: Pick<Mp3Info, 'sampleRate' | 'frames' | 'spf' | 'delay'>, start: number, end: number) {
+  const sr = info.sampleRate, s0 = Math.max(0, Math.round(start * sr));
+  return [s0, Math.max(s0, Math.min(Math.round(end * sr), info.frames * info.spf - info.delay))];
+}
+
+/**
+ * The part of a denoised window that belongs to range `o` (inside it): the same samples a pass
+ * over `o` alone would give, except that the model is already warmed up at the start.
+ */
+export function denoisedPart(reader: RangeReader, info: Mp3Info, window: DenoiseRange, o: DenoiseRange): RangeReader {
+  const { up, down } = denoiseRatio(info.sampleRate);
+  const [w0, w1] = sourceSpan(info, window.start, window.end), [s0, s1] = sourceSpan(info, o.start, o.end);
+  const from = Math.round(((s0 - w0) * up) / down);
+  const count = Math.min(Math.ceil(((s1 - s0) * up) / down), Math.ceil(((w1 - w0) * up) / down) - from);
+  return {
+    sampleRate: reader.sampleRate,
+    read: async (onBlock, onProgress) => {
+      let pos = 0;
+      await reader.read(async chs => {
+        const a = Math.max(pos, from), b = Math.min(pos + chs[0].length, from + count);
+        if (a < b) {
+          await onBlock(chs.map(c => c.subarray(a - pos, b - pos)), reader.sampleRate);
+          onProgress?.((b - from) / count);
+        }
+        pos += chs[0].length;
+      });
+    },
+  };
+}
 
 /**
  * Splitting the denoising into segments for several threads. Each segment starts `warmupSec` early
@@ -147,10 +188,8 @@ export interface DenoiseSegment {
 export function planDenoise(info: Pick<Mp3Info, 'sampleRate' | 'frames' | 'spf' | 'delay'>, start: number, end: number,
   workers: number, params: Partial<SegmentParams> = {}): { segments: DenoiseSegment[]; fade: number } {
   const p = { ...SEGMENT_PARAMS, ...params }, sr = info.sampleRate;
-  const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a);
-  const up = DENOISE_RATE / gcd(sr, DENOISE_RATE), down = sr / gcd(sr, DENOISE_RATE);
-  const s0 = Math.max(0, Math.round(start * sr));
-  const s1 = Math.max(s0, Math.min(Math.round(end * sr), info.frames * info.spf - info.delay));
+  const { up, down } = denoiseRatio(sr);
+  const [s0, s1] = sourceSpan(info, start, end);
   const n = s1 - s0, dur = n / sr;
   const out = (k: number) => Math.ceil((k * up) / down); // output index of source offset k
   const grid = (sec: number) => Math.ceil((sec * sr) / down) * down;
@@ -220,7 +259,7 @@ export const inProcess = (src: ByteSource, info: Mp3Info, channels: 1 | 2): Segm
  * one core (≈ 7× real time), so it is split over `workers` threads by `runner`, runs once and is
  * kept in memory for the following passes.
  */
-export async function denoiseRange(src: ByteSource, info: Mp3Info, o: Pick<ProcessOptions, 'start' | 'end' | 'channels'>,
+export async function denoiseRange(src: ByteSource, info: Mp3Info, o: DenoiseRange,
   onProgress?: (p: number) => void, threads: { workers: number; runner: SegmentRunner } | null = null,
   params?: Partial<SegmentParams>): Promise<RangeReader> {
   const plan = planDenoise(info, o.start, o.end, threads?.workers ?? 1, params);
