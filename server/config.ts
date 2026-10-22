@@ -41,11 +41,15 @@ export function parseConfig(raw: unknown, env: NodeJS.ProcessEnv = process.env):
     if (typeof v !== 'number' || !(v > 0)) throw new ConfigError(`config: ${name} muss eine positive Zahl sein.`);
     return v;
   };
+  if (raw.sessionSecret !== undefined && (typeof raw.sessionSecret !== 'string' || raw.sessionSecret.length < 16)) {
+    throw new ConfigError('config: sessionSecret muss mindestens 16 Zeichen lang sein (oder weglassen).');
+  }
+  const secret = typeof raw.sessionSecret === 'string' ? raw.sessionSecret : null;
   return {
     users,
     dataDir: resolve(env.DATA_DIR ?? '/data'),
     staticDir: resolve(env.STATIC_DIR ?? 'dist'),
-    sessionSecret: typeof raw.sessionSecret === 'string' && raw.sessionSecret.length >= 16 ? raw.sessionSecret : null,
+    sessionSecret: secret,
     sessionDays: num(raw.sessionDays, 30, 'sessionDays'),
     maxUploadMb: num(raw.maxUploadMb, 150, 'maxUploadMb'),
     secureCookies: raw.secureCookies === true,

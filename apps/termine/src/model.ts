@@ -17,7 +17,8 @@ export interface TermineData { dates: Record<string, DateEntry>; }
 
 export type Op =
   | { action: 'vote'; date: string; sign: string; answer: Answer | null }
-  | { action: 'update'; date: string; title: string; time: string; assigned: string; note: string };
+  | { action: 'update'; date: string; title: string; time: string; assigned: string; note: string }
+  | { action: 'delete'; date: string };
 
 export const LIMITS = { title: 100, time: 20, assigned: 60, note: 1000 } as const;
 
@@ -26,9 +27,11 @@ export const emptyEntry = (): DateEntry => ({ title: '', time: '', assigned: '',
 const pad = (n: number) => String(n).padStart(2, '0');
 export const isoDate = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 
+/** Real calendar day between 2000 and 2100 (also the range the spreadsheet round-trips safely). */
 export function isValidDate(s: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
   const [y, m, d] = s.split('-').map(Number);
+  if (y < 2000 || y > 2100) return false;
   const dt = new Date(y, m - 1, d);
   return dt.getFullYear() === y && dt.getMonth() === m - 1 && dt.getDate() === d;
 }
@@ -54,6 +57,10 @@ export class OpError extends Error {}
 export function applyOp(data: TermineData, op: Op): TermineData {
   if (!op || typeof op !== 'object' || !isValidDate(String(op.date))) throw new OpError('bad date');
   const entry = data.dates[op.date] ?? emptyEntry();
+  if (op.action === 'delete') {
+    delete data.dates[op.date];
+    return data;
+  }
   if (op.action === 'vote') {
     const sign = normalizeSign(String(op.sign ?? ''));
     if (!sign) throw new OpError('bad sign');

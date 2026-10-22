@@ -87,12 +87,6 @@ describe('login', () => {
     expect((await fetch(`${base}/api/me`, as(forged))).status).toBe(401);
     expect((await fetch(`${base}/api/me`, as('mischer_session=admin.99999999999999.abc'))).status).toBe(401);
   });
-
-  it('refuses requests from another origin', async () => {
-    const { cookie } = await login('admin', 'admin-password');
-    const res = await fetch(`${base}/api/termine`, { ...json(cookie, 'POST', { action: 'vote', date: '2030-01-06', sign: 'JD', answer: 'yes' }), headers: { Cookie: cookie, 'Content-Type': 'application/json', Origin: 'https://evil.example' } });
-    expect(res.status).toBe(403);
-  });
 });
 
 describe('termine', () => {
@@ -120,6 +114,14 @@ describe('termine', () => {
     expect((await fetch(`${base}/api/termine`, json(m, 'POST', edit))).status).toBe(403);
     expect((await fetch(`${base}/api/termine`, json(a, 'POST', edit))).status).toBe(200);
     expect((await (await fetch(`${base}/api/termine`, as(m))).json()).dates['2030-03-03'].title).toBe('Abendmahl');
+  });
+
+  it('lets the admin delete a date, but not the mischer', async () => {
+    const m = (await login('mischer', 'mischer-password')).cookie, a = (await login('admin', 'admin-password')).cookie;
+    await fetch(`${base}/api/termine`, json(m, 'POST', { action: 'vote', date: '2030-04-07', sign: 'JD', answer: 'yes' }));
+    expect((await fetch(`${base}/api/termine`, json(m, 'POST', { action: 'delete', date: '2030-04-07' }))).status).toBe(403);
+    expect((await fetch(`${base}/api/termine`, json(a, 'POST', { action: 'delete', date: '2030-04-07' }))).status).toBe(200);
+    expect((await (await fetch(`${base}/api/termine`, as(m))).json()).dates['2030-04-07']).toBeUndefined();
   });
 
   it('rejects invalid input', async () => {
@@ -243,6 +245,7 @@ describe('auth helpers and config', () => {
     expect(() => parseConfig({ users: { admin: { password: 'CHANGE-ME' }, mischer: { password: 'long-enough-2' } } }, {})).toThrow(ConfigError);
     expect(() => parseConfig({ users: { admin: { password: 'short' }, mischer: { password: 'long-enough-2' } } }, {})).toThrow(/zu kurz/);
     expect(() => parseConfig({ users: { admin: { password: 'same-password' }, mischer: { password: 'same-password' } } }, {})).toThrow(/verschiedene/);
+    expect(() => parseConfig({ ...ok, sessionSecret: 'short' }, {})).toThrow(/sessionSecret/);
     expect(() => parseConfig({}, {})).toThrow(ConfigError);
   });
 });

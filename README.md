@@ -58,6 +58,23 @@ data/predigten/            hochgeladene MP3-Dateien
 data/.session-secret       Schlüssel für die Anmelde-Cookies (wird automatisch angelegt)
 ```
 
+### Gut zu wissen
+
+- **Port nicht freigeben:** `9120` gehört nur hinter den Reverse-Proxy (nicht am Router weiterleiten). Sonst könnten Absender die
+  Kopfzeile `X-Forwarded-For` fälschen und die Sperre nach Fehlversuchen umgehen.
+- **Erste Einrichtung:** Als `admin` in Predigt-Schnitt ⚙ Einstellungen einmal Gemeinde, Prediger, Namensschema, Lautheit, Format und Cover
+  prüfen und *Speichern* – erst dann gelten sie für `mischer` (bis dahin nutzt dessen Browser die Standardwerte).
+- **Sichern:** den Ordner `data` mitsichern (z. B. Hyper Backup). Wiederherstellen = Ordner zurückkopieren.
+- **Abmelden** löscht nur das Cookie dieses Browsers. Alle Anmeldungen eines Benutzers werden ungültig, wenn sein Passwort in der
+  `config.json` geändert wird (Container neu starten).
+- **Safari (iPad/iPhone)** löscht lokal gespeicherte Daten von Webseiten nach etwa 7 Tagen ohne Nutzung: Das Kürzel muss dann neu
+  eingetragen werden; die Anmeldung selbst bleibt (sie liegt im Server-Cookie).
+- **Upload-Größe:** Der Server hält eine Datei beim Hochladen im Speicher (etwa das Vierfache der Dateigröße, 30 MB ≈ 120 MB RAM).
+  Grenze: `maxUploadMb` (Standard 150).
+- **`termine.xlsx` am NAS direkt bearbeiten** geht, aber wer genau dann antwortet, wenn die Datei gespeichert wird, kann überschrieben
+  werden. Sicherer: in der App herunterladen, bearbeiten, wieder hochladen.
+- Baut Portainer das Image nicht (Fehler „image not found“): auf dem NAS per SSH im geklonten Ordner `docker compose up -d --build`.
+
 ### Konfiguration
 
 `config.example.json` ist die Vorlage; die echte `config.json` gehört **nicht** ins Repository (steht in `.gitignore`).
@@ -88,7 +105,7 @@ oder `Nein`:
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 25.10.2026 | Sonntag | 10:00 | Abendmahl | JD, MK | … | Ja | Vielleicht |
 
-- Der Admin kann in der App Termine bearbeiten und mit „+ Weiterer Termin“ einen Termin an einem anderen Tag anlegen
+- Der Admin kann in der App Termine bearbeiten oder löschen und mit „+ Weiterer Termin“ einen Termin an einem anderen Tag anlegen
   (z. B. Karfreitag). **Einstellungen → Tabelle** lädt die Excel-Datei herunter bzw. ersetzt mit einer hochgeladenen Datei
   *alle* Termine (der alte Stand bleibt als `termine.backup.xlsx` liegen).
 - Die Datei darf auch direkt auf dem NAS bearbeitet werden; der Server liest sie bei jeder Anfrage neu. Verstanden werden

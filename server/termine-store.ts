@@ -6,6 +6,8 @@ import { join } from 'node:path';
 import { applyOp, type Op, type TermineData } from '../apps/termine/src/model';
 import { readTermineXlsx, writeTermineXlsx } from '../apps/termine/src/xlsx';
 
+export class InvalidSpreadsheet extends Error {}
+
 export interface Loaded { data: TermineData; /** spreadsheet rows ignored because of a missing/invalid date */ skipped: number; }
 
 const toBuffer = async (blob: Blob) => Buffer.from(await blob.arrayBuffer());
@@ -19,7 +21,10 @@ export class TermineStore {
   /** An unreadable file throws (and is never overwritten). A missing file is an empty list. */
   async read(): Promise<Loaded> {
     let buf: Buffer;
-    try { buf = await readFile(this.file); } catch { return { data: { dates: {} }, skipped: 0 }; }
+    try { buf = await readFile(this.file); } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') return { data: { dates: {} }, skipped: 0 };
+      throw e; // any other read problem must not look like an empty list (the next change would overwrite the file)
+    }
     return readTermineXlsx(new Blob([new Uint8Array(buf)]));
   }
 
@@ -54,7 +59,9 @@ export class TermineStore {
   /** Replaces all dates with the content of an uploaded spreadsheet; the previous file is kept as termine.backup.xlsx. */
   importXlsx(buf: Buffer): Promise<{ dates: number; skipped: number }> {
     return this.serialize(async () => {
-      const { data, skipped } = await readTermineXlsx(new Blob([new Uint8Array(buf)])); // throws if it is not a spreadsheet
+      let parsed: Loaded;
+      try { parsed = await readTermineXlsx(new Blob([new Uint8Array(buf)])); } catch { throw new InvalidSpreadsheet(); }
+      const { data, skipped } = parsed;
       await copyFile(this.file, join(this.dir, 'termine.backup.xlsx')).catch(() => undefined);
       await this.write(data);
       return { dates: Object.keys(data.dates).length, skipped };

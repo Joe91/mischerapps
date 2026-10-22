@@ -88,6 +88,14 @@ export const sharedPart = (s: Settings) => Object.fromEntries(SHARED_KEYS.map(k 
 
 /** Drops targets of removed kinds (the old PHP script) and makes sure the server target exists. */
 export function normalizeSettings(s: Settings): Settings {
+  // stored or shared values that do not fit (old versions, hand-edited files) fall back to the defaults
+  const d = defaultSettings();
+  if (!(s.loudnessPreset in LOUDNESS_PRESETS)) s.loudnessPreset = d.loudnessPreset;
+  if (!(s.exportPreset in EXPORT_PRESETS)) s.exportPreset = d.exportPreset;
+  for (const k of ['fadeIn', 'fadeOut', 'maxGainDb', 'minSermonMin', 'mergeGapSec'] as const) {
+    if (typeof s[k] !== 'number' || !isFinite(s[k]) || s[k] < 0) s[k] = d[k];
+  }
+
   s.profiles = s.profiles.filter(p => p.kind === 'server' || p.kind === 'opencloud' || p.kind === 'nextcloud');
   if (!s.profiles.some(p => p.kind === 'server')) s.profiles.unshift({ ...SERVER_PROFILE });
   if (!s.profiles.some(p => p.id === s.activeProfileId)) s.activeProfileId = SERVER_PROFILE.id;

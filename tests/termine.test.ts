@@ -12,6 +12,8 @@ describe('termine model', () => {
   it('validates dates and Kürzel', () => {
     expect(isValidDate('2026-10-25')).toBe(true);
     expect(isValidDate('2026-02-30')).toBe(false);
+    expect(isValidDate('0100-01-01')).toBe(false);   // outside 2000–2100: does not survive the spreadsheet
+    expect(isValidDate('2101-01-01')).toBe(false);
     expect(isValidDate('25.10.2026')).toBe(false);
     expect(normalizeSign(' jd ')).toBe('JD');
     expect(normalizeSign('Jö')).toBe('JÖ');
@@ -42,11 +44,19 @@ describe('termine model', () => {
     expect(e.votes).toEqual({ JD: 'yes' });
   });
 
+  it('deletes a date with all its answers', () => {
+    const data: TermineData = { dates: {} };
+    applyOp(data, { action: 'vote', date: '2026-10-25', sign: 'JD', answer: 'yes' });
+    applyOp(data, { action: 'delete', date: '2026-10-25' });
+    applyOp(data, { action: 'delete', date: '2026-11-01' }); // nothing there: fine
+    expect(data.dates).toEqual({});
+  });
+
   it('rejects invalid input', () => {
     const data: TermineData = { dates: {} };
     expect(() => applyOp(data, { action: 'vote', date: '2026-13-01', sign: 'JD', answer: 'yes' })).toThrow(OpError);
     expect(() => applyOp(data, { action: 'vote', date: '2026-10-25', sign: '', answer: 'yes' })).toThrow('bad sign');
     expect(() => applyOp(data, { action: 'vote', date: '2026-10-25', sign: 'JD', answer: 'ok' as never })).toThrow('bad answer');
-    expect(() => applyOp(data, { action: 'delete', date: '2026-10-25' } as never)).toThrow('bad action');
+    expect(() => applyOp(data, { action: 'frobnicate', date: '2026-10-25' } as never)).toThrow('bad action');
   });
 });

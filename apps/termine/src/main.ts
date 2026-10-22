@@ -39,7 +39,7 @@ const fmtLong = (iso: string) => parseIso(iso).toLocaleDateString('de-DE', { wee
 let warnedSkipped = 0;
 function take(res: Loaded) {
   data = res.data;
-  if (res.skipped && res.skipped !== warnedSkipped) {
+  if (isAdmin() && res.skipped && res.skipped !== warnedSkipped) {
     toast(`${res.skipped} Zeile(n) in termine.xlsx haben kein gültiges Datum und werden ignoriert – beim nächsten Speichern gehen sie verloren.`, 'error', 10_000);
   }
   warnedSkipped = res.skipped;
@@ -184,6 +184,17 @@ function assignedInfo(e: DateEntry, assigned: string[]) {
   );
 }
 
+async function deleteEntry(date: string) {
+  if (!confirm(`Den Termin am ${fmtLong(date)} mit allen Antworten löschen?`)) return;
+  try {
+    take(await sendOp({ action: 'delete', date }));
+    toast('Termin gelöscht.', 'ok', 2000);
+    startEdit(null);
+  } catch (e) {
+    toast((e as Error).message, 'error');
+  }
+}
+
 function editForm(date: string, e: DateEntry) {
   const field = (label: string, key: 'title' | 'time' | 'assigned', placeholder: string) =>
     h('label', null, label, h('input', { name: key, value: e[key], maxlength: LIMITS[key], placeholder }));
@@ -205,6 +216,8 @@ function editForm(date: string, e: DateEntry) {
     ),
     h('label', null, 'Hinweise', note),
     h('div', { class: 'actions' },
+      data.dates[date] ? h('button', { class: 'btn btn-danger', type: 'button', onclick: () => deleteEntry(date) }, 'Termin löschen') : '',
+      h('span', { class: 'spacer' }),
       h('button', { class: 'btn', type: 'button', onclick: () => startEdit(null) }, 'Abbrechen'),
       h('button', { class: 'btn btn-primary', type: 'submit' }, 'Speichern'),
     ),

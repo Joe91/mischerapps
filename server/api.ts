@@ -3,13 +3,16 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { mkdir, readdir, stat, writeFile } from 'node:fs/promises';
+import { createWriteStream } from 'node:fs';
+import { mkdir, readdir, stat, unlink } from 'node:fs/promises';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 import { join } from 'node:path';
 import { OpError, type Op } from '../apps/termine/src/model';
 import { LoginLimiter, signSession, verifyPassword, verifySession } from './auth';
 import { ROLES, type Role, type ServerConfig } from './config';
 import { SharedSettings } from './shared-settings';
-import { TermineStore } from './termine-store';
+import { InvalidSpreadsheet, TermineStore } from './termine-store';
 
 export class HttpError extends Error {
   constructor(public status: number, message: string) { super(message); }
@@ -108,7 +111,7 @@ export function createApi(cfg: ServerConfig) {
     const type = String(req.headers['content-type'] ?? '');
     if (!type.startsWith('multipart/form-data')) throw new HttpError(400, 'upload error');
     const body = await readBody(req, maxUpload + 1024 * 1024);
-    const form = await new Response(new Uint8Array(body), { headers: { 'content-type': type } }).formData().catch(() => null);
+    const form = await new Response(body as unknown as BodyInit, { headers: { 'content-type': type } }).formData().catch(() => null);
     const file = form?.get('file');
     if (!(file instanceof File)) throw new HttpError(400, 'upload error');
     if (file.size > maxUpload) throw new HttpError(413, 'too large');
@@ -119,10 +122,13 @@ export function createApi(cfg: ServerConfig) {
     const isFrame = head[0] === 0xff && (head[1] & 0xe0) === 0xe0;
     if (!isId3 && !isFrame) throw new HttpError(415, 'not mp3');
     await mkdir(predigten, { recursive: true });
+    const target = join(predigten, name);
     try {
-      await writeFile(join(predigten, name), new Uint8Array(await file.arrayBuffer()), { flag: 'wx' }); // never overwrite
+      // 'wx': never overwrite; streamed, so the file is not copied once more in memory
+      await pipeline(Readable.fromWeb(file.stream() as never), createWriteStream(target, { flags: 'wx' }));
     } catch (e) {
       if ((e as NodeJS.ErrnoException).code === 'EEXIST') throw new HttpError(409, 'exists');
+      await unlink(target).catch(() => undefined); // no half-written file
       throw e;
     }
     log(`upload ${name} (${Math.round(file.size / 1024)} kB)`);
@@ -163,8 +169,8 @@ export function createApi(cfg: ServerConfig) {
       admin();
       let result;
       try { result = await termine.importXlsx(await readBody(req, 5 * 1024 * 1024)); } catch (e) {
-        if (e instanceof HttpError) throw e;
-        throw new HttpError(400, 'not a valid xlsx file');
+        if (e instanceof InvalidSpreadsheet) throw new HttpError(400, 'not a valid xlsx file');
+        throw e;
       }
       log(`termine imported: ${result.dates} dates, ${result.skipped} rows skipped`);
       return sendJson(res, 200, result);
@@ -199,11 +205,7 @@ export function createApi(cfg: ServerConfig) {
     const path = (req.url ?? '').split('?')[0];
     if (!path.startsWith('/api/')) return false;
     try {
-      // a cross-site page must not be able to act with the login cookie (SameSite=Strict is the main protection)
-      const origin = req.headers.origin;
-      if (origin && req.method !== 'GET' && new URL(origin).host !== (req.headers['x-forwarded-host'] ?? req.headers.host)) {
-        throw new HttpError(403, 'cross-origin request');
-      }
+      // CSRF: the login cookie is SameSite=Strict, and JSON bodies cannot be sent cross-site without a CORS preflight
       await route(req, res, path);
     } catch (e) {
       if (res.headersSent) { res.end(); return true; }

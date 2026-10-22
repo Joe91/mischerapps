@@ -28,8 +28,9 @@ function initialState(settings: Settings): AppState {
 await ensureLogin('Predigt-Schnitt');
 
 // what the admin set up for everybody (server) wins over the browser's own copy
-const settings = normalizeSettings(settingsStore.load());
+const settings = settingsStore.load();
 Object.assign(settings, await loadShared('predigt'));
+normalizeSettings(settings);
 
 const nav = $('#steps');
 const main = $('#main');

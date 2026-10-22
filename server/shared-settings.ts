@@ -20,7 +20,12 @@ export class SharedSettings {
   constructor(private dir: string) { this.file = join(dir, 'settings.json'); }
 
   private async readAll(): Promise<Record<string, Record<string, unknown>>> {
-    try { return JSON.parse(await readFile(this.file, 'utf8')); } catch { return {}; }
+    let text: string;
+    try { text = await readFile(this.file, 'utf8'); } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'ENOENT') return {};
+      throw e;
+    }
+    try { return JSON.parse(text); } catch { return {}; } // hand-edited and broken: start over with the defaults
   }
 
   async get(app: string): Promise<Record<string, unknown>> {
