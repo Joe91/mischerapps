@@ -3,7 +3,7 @@
 // one at a time and written atomically, so simultaneous answers cannot overwrite each other.
 import { mkdir, readFile, rename, writeFile, copyFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { applyOp, type Op, type TermineData } from '../apps/termine/src/model';
+import { applyOp, emptyEntry, sundays, type Op, type TermineData } from '../apps/termine/src/model';
 import { readTermineXlsx, writeTermineXlsx } from '../apps/termine/src/xlsx';
 
 export class InvalidSpreadsheet extends Error {}
@@ -53,6 +53,13 @@ export class TermineStore {
 
   async exportXlsx(): Promise<Buffer> {
     const { data } = await this.read();
+    return toBuffer(await writeTermineXlsx(data));
+  }
+
+  /** The current dates plus the next `weeks` Sundays that are not listed yet: delete the rows that are not needed, upload again. */
+  async templateXlsx(weeks = 52, from = new Date()): Promise<Buffer> {
+    const { data } = await this.read();
+    for (const date of sundays(from, weeks)) data.dates[date] ??= emptyEntry();
     return toBuffer(await writeTermineXlsx(data));
   }
 

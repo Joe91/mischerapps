@@ -1,12 +1,11 @@
 import '../../../packages/ui-kit/ui.css';
 import './app.css';
 import { ensureLogin, isAdmin, logout } from '../../../packages/auth/auth';
-import { loadShared, saveShared } from '../../../packages/settings/shared';
 import { h, $, download, toast } from '../../../packages/ui-kit/dom';
 import { settingsStore, type Settings } from './settings';
-import { exportXlsx, fetchData, importXlsx, sendOp, type Loaded } from './api';
+import { exportXlsx, fetchData, importXlsx, sendOp, templateXlsx, type Loaded } from './api';
 import {
-  ANSWERS, LIMITS, applyOp, emptyEntry, isValidDate, isoDate, normalizeSign, sundays,
+  ANSWERS, LIMITS, applyOp, emptyEntry, isValidDate, isoDate, normalizeSign,
   type Answer, type DateEntry, type TermineData,
 } from './model';
 
@@ -20,12 +19,11 @@ await ensureLogin('Termine');
 const main = $('#main');
 const stand = $('#stand');
 const settings: Settings = settingsStore.load();
-const sharedWeeks = (await loadShared('termine')).weeks;
-if (typeof sharedWeeks === 'number' && sharedWeeks >= 1) settings.weeks = sharedWeeks;
 let data: TermineData = { dates: {} };
 let loaded = false;
 let loadError = '';
-let pastWeeks = 0;
+/** how many past dates are listed (newest first), raised by "Ältere anzeigen" */
+let pastShown = 0;
 /** date whose card is in edit mode; its form is kept across re-renders so typing is not lost */
 let editing: string | null = null;
 let openForm: HTMLFormElement | null = null;
@@ -56,14 +54,17 @@ function knownSigns(): string[] {
   return [...all].sort();
 }
 
+/** Only the dates on the list (= rows of the spreadsheet): all upcoming ones and the newest `pastShown` past ones. */
 function visibleDates(): string[] {
-  const shown = sundays(new Date(), settings.weeks + pastWeeks, -pastWeeks);
-  const from = pastWeeks ? shown[0] : today();
-  const list = new Set(shown);
-  for (const d of Object.keys(data.dates)) if (d >= from) list.add(d);
+  const all = Object.keys(data.dates).sort();
+  const t = today();
+  const past = all.filter(d => d < t);
+  const list = new Set([...(pastShown ? past.slice(-pastShown) : []), ...all.filter(d => d >= t)]);
   if (editing) list.add(editing);
-  return [...list].filter(d => d >= from || d === editing).sort();
+  return [...list].sort();
 }
+
+const pastCount = () => Object.keys(data.dates).filter(d => d < today()).length;
 
 // ---- server ----
 
@@ -105,6 +106,21 @@ async function saveEntry(date: string, fields: Pick<DateEntry, 'title' | 'time' 
   }
 }
 
+/** Admin: puts a date on the list (any day, e.g. a holiday) and opens it for details. */
+async function addDate(date: string) {
+  if (!data.dates[date]) {
+    try {
+      take(await sendOp({ action: 'add', date }));
+    } catch (e) {
+      toast((e as Error).message, 'error');
+      return;
+    }
+    if (date < today()) pastShown = Math.max(pastShown, Object.keys(data.dates).filter(d => d >= date && d < today()).length);
+  }
+  startEdit(date);
+  document.getElementById(`d-${date}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
 // ---- rendering ----
 
 function signBar() {
@@ -124,20 +140,16 @@ function signBar() {
   input.addEventListener('keydown', e => { if (e.key === 'Enter') input.blur(); });
 
   const extra = h('input', { type: 'date', class: 'hidden' });
-  extra.addEventListener('change', () => {
-    if (!isValidDate(extra.value)) return;
-    startEdit(extra.value);
-    document.getElementById(`d-${extra.value}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  });
+  extra.addEventListener('change', () => { if (isValidDate(extra.value)) void addDate(extra.value); });
 
   return h('div', { class: 'toolbar' },
     h('label', { class: 'sign-label' }, 'Mein Kürzel', input),
     h('span', { class: 'spacer' }),
-    h('button', { class: 'btn btn-sm', type: 'button', onclick: () => { pastWeeks += PAST_STEP; render(); } }, '↑ Ältere anzeigen'),
+    pastCount() > pastShown ? h('button', { class: 'btn btn-sm', type: 'button', onclick: () => { pastShown += PAST_STEP; render(); } }, '↑ Ältere anzeigen') : '',
     isAdmin() ? h('button', {
-      class: 'btn btn-sm', type: 'button', title: 'Termin an einem anderen Tag (z. B. Feiertag) anlegen',
+      class: 'btn btn-sm', type: 'button', title: 'Einen Tag (Sonntag oder z. B. Feiertag) zur Liste hinzufügen',
       onclick: () => { extra.classList.remove('hidden'); extra.showPicker?.(); extra.focus(); },
-    }, '+ Weiterer Termin') : '',
+    }, '+ Termin hinzufügen') : '',
     isAdmin() ? extra : '',
   );
 }
@@ -271,11 +283,17 @@ function render() {
   }
   // keep focus in the sign field if the user is typing there
   const signFocused = document.activeElement?.id === 'sign';
-  const next = visibleDates().find(d => d >= today());
+  const dates = visibleDates();
+  const next = dates.find(d => d >= today());
   main.replaceChildren(head,
     loadError ? h('div', { class: 'notice error' }, `Aktualisieren fehlgeschlagen: ${loadError}`) : '',
-    ...visibleDates().map(date => dateCard(date, date === next)),
-    h('p', { class: 'muted small center' }, `Angezeigt: die nächsten ${settings.weeks} Sonntage und alle weiteren eingetragenen Termine. Anzahl in den Einstellungen änderbar.`),
+    next ? '' : h('p', { class: 'muted center' }, isAdmin()
+      ? 'Noch keine kommenden Termine. Mit „+ Termin hinzufügen“ oder über ⚙ Einstellungen → Tabelle (Vorlage mit allen Sonntagen) anlegen.'
+      : 'Noch keine kommenden Termine eingetragen.'),
+    ...dates.map(date => dateCard(date, date === next)),
+    h('p', { class: 'muted small center' }, isAdmin()
+      ? 'Angezeigt werden nur die eingetragenen Termine – weitere über „+ Termin hinzufügen“ oder die Tabelle in den Einstellungen.'
+      : 'Angezeigt werden die Termine, die der Admin eingetragen hat.'),
   );
   if (signFocused) $<HTMLInputElement>('#sign').focus();
 }
@@ -283,10 +301,10 @@ function render() {
 // ---- settings ----
 
 function openSettings() {
-  const draft = { weeks: settings.weeks };
   const dlg = h('dialog', { class: 'settings narrow-dialog' });
-  const weeks = h('input', { type: 'number', min: 1, max: 52, value: String(draft.weeks) });
-  weeks.addEventListener('change', () => { const v = Math.round(Number(weeks.value)); if (v >= 1 && v <= 52) draft.weeks = v; });
+  const downloadSheet = (fetchSheet: () => Promise<Blob>, name: string) => async () => {
+    try { download(await fetchSheet(), name); } catch (e) { toast((e as Error).message, 'error'); }
+  };
 
   const importInput = h('input', { type: 'file', accept: '.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', class: 'hidden' });
   importInput.addEventListener('change', async () => {
@@ -306,35 +324,19 @@ function openSettings() {
 
   dlg.append(
     h('div', { class: 'dlg-head' }, h('h2', null, 'Einstellungen'), h('span', { class: 'spacer' }),
-      h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => dlg.close() }, 'Abbrechen'),
-      h('button', {
-        class: 'btn btn-primary', type: 'button', onclick: async () => {
-          try {
-            await saveShared('termine', draft);
-            settings.weeks = draft.weeks;
-            settingsStore.save(settings);
-            dlg.close();
-            render();
-          } catch (e) {
-            toast((e as Error).message, 'error');
-          }
-        },
-      }, 'Speichern'),
+      h('button', { class: 'btn btn-primary', type: 'button', onclick: () => dlg.close() }, 'Schließen'),
     ),
     h('div', { class: 'dlg-body' },
-      h('fieldset', null, h('legend', null, 'Anzeige (für alle)'),
-        h('label', null, 'Anzahl kommender Sonntage', weeks),
-      ),
-      h('fieldset', null, h('legend', null, 'Tabelle (Excel)'),
+      h('fieldset', null, h('legend', null, 'Termine (Excel)'),
         h('p', { class: 'muted small' },
-          'Alle Termine und Antworten stehen in einer Excel-Datei auf dem Server (termine.xlsx), eine Zeile pro Termin und eine Spalte pro Kürzel. ' +
-          'Herunterladen, in Excel bearbeiten und wieder hochladen – das Hochladen ersetzt alle Termine.'),
+          'Die App zeigt genau die Termine, die in der Excel-Datei auf dem Server (termine.xlsx) stehen: eine Zeile pro Termin, ' +
+          'eine Spalte pro Kürzel. Es gibt keine automatischen Sonntage.'),
+        h('p', { class: 'muted small' },
+          'Auswählen mit der Vorlage: Sie enthält die bisherigen Termine und dazu die nächsten 52 Sonntage. Zeilen, die ihr nicht braucht, ' +
+          'in Excel löschen, speichern und wieder hochladen – das Hochladen ersetzt alle Termine.'),
         h('div', { class: 'row' },
-          h('button', {
-            class: 'btn btn-sm', type: 'button', onclick: async () => {
-              try { download(await exportXlsx(), 'termine.xlsx'); } catch (e) { toast((e as Error).message, 'error'); }
-            },
-          }, '⬇ Herunterladen'),
+          h('button', { class: 'btn btn-sm', type: 'button', onclick: downloadSheet(templateXlsx, 'termine-vorlage.xlsx') }, '⬇ Vorlage mit allen Sonntagen'),
+          h('button', { class: 'btn btn-sm', type: 'button', onclick: downloadSheet(exportXlsx, 'termine.xlsx') }, '⬇ Aktuelle Tabelle'),
           h('button', { class: 'btn btn-sm', type: 'button', onclick: () => importInput.click() }, '⬆ Hochladen …'),
           importInput,
         ),

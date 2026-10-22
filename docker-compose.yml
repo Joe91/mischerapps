@@ -3,8 +3,9 @@
 # /volume1/docker/mischer/config/ – see README, "Auf dem NAS betreiben".
 services:
   mischer:
+    # Built on the NAS from this repository. No `image:` name on purpose: with one, Portainer's "pull" step
+    # tries to download it from Docker Hub ("pull access denied for mischer-app").
     build: .
-    image: mischer-app:latest
     container_name: Mischer
     restart: on-failure:5
     user: "1026:100"

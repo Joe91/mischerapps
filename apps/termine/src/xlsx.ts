@@ -2,13 +2,14 @@
 //
 //   Datum | Wochentag | Uhrzeit | Anlass | Eingeteilt | Hinweis | JD | MK | …
 //
-// One row per date, one column per Kürzel (from column G on) holding Ja / Vielleicht / Nein.
+// One row per date, one column per Kürzel (from column G on) holding Ja / Vielleicht / Nein. The rows are
+// the dates the app lists: a row with nothing but a date is a date people can answer, a deleted row is gone.
 // "Wochentag" is only there for the eye and is ignored when reading, so people can edit the file in
 // Excel / the cloud's office editor. Dates are written as real date cells (UTC midnight, so the
 // calendar day is the same in every time zone) and read back as dates, "25.10.2026" or "2026-10-25".
 import writeExcelFile from 'write-excel-file/universal';
 import { readSheet } from 'read-excel-file/universal';
-import { LIMITS, emptyEntry, isBlank, isValidDate, normalizeSign, type Answer, type TermineData } from './model';
+import { LIMITS, emptyEntry, isValidDate, normalizeSign, type Answer, type TermineData } from './model';
 
 export const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
@@ -118,7 +119,7 @@ export async function readTermineXlsx(file: Blob | ArrayBuffer): Promise<ParsedT
       const a = toAnswer(row[c]);
       if (a) entry.votes[sign] = a;
     }
-    if (!isBlank(entry)) data.dates[date] = entry;
+    data.dates[date] = entry; // a row with just a date is a date on the list
   }
   return { data, skipped };
 }

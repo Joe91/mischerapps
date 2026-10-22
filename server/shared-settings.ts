@@ -11,7 +11,6 @@ export const SHARED_SETTINGS: Record<string, Record<string, Kind>> = {
     fadeIn: 'number', fadeOut: 'number', maxGainDb: 'number', namePattern: 'string', congregation: 'string',
     preacher: 'string', titlePrefix: 'string', coverDataUrl: 'string', minSermonMin: 'number', mergeGapSec: 'number',
   },
-  termine: { weeks: 'number' },
 };
 
 export class SharedSettings {

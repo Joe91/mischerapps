@@ -14,7 +14,10 @@ export function describeApiError(status: number, body: string): string {
   const b = body.trim();
   switch (status) {
     case 0: return 'Server nicht erreichbar. Bitte die Internetverbindung prüfen.';
-    case 400: return b === 'bad sign' ? 'Ungültiges Kürzel (1–6 Buchstaben oder Ziffern).' : `Der Server hat die Änderung abgelehnt (${b || 400}).`;
+    case 400:
+      if (b === 'bad sign') return 'Ungültiges Kürzel (1–6 Buchstaben oder Ziffern).';
+      if (b === 'unknown date') return 'Diesen Termin gibt es nicht mehr. Die Liste wird neu geladen.';
+      return `Der Server hat die Änderung abgelehnt (${b || 400}).`;
     case 401: return 'Die Anmeldung ist abgelaufen. Bitte die Seite neu laden und anmelden.';
     case 403: return 'Das darf nur der Admin.';
     case 413: return 'Die Datei ist zu groß.';
@@ -46,6 +49,9 @@ export const sendOp = async (op: Op): Promise<Loaded> =>
 
 /** Admin: the current spreadsheet. */
 export const exportXlsx = async (): Promise<Blob> => (await request('/api/termine/export')).blob();
+
+/** Admin: the current spreadsheet plus the coming Sundays, to delete the rows that are not needed. */
+export const templateXlsx = async (): Promise<Blob> => (await request('/api/termine/template')).blob();
 
 /** Admin: replaces all dates with the content of a spreadsheet. */
 export async function importXlsx(file: Blob): Promise<{ dates: number; skipped: number }> {

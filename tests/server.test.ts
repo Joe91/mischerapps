@@ -8,7 +8,7 @@ import { createApi } from '../server/api';
 import { createStatic } from '../server/static';
 import { hashPassword, LoginLimiter, signSession, verifyPassword, verifySession } from '../server/auth';
 import { parseConfig, ConfigError, type ServerConfig } from '../server/config';
-import { writeTermineXlsx } from '../apps/termine/src/xlsx';
+import { readTermineXlsx, writeTermineXlsx } from '../apps/termine/src/xlsx';
 
 let server: Server, base: string, dir: string;
 const cfg = (): ServerConfig => ({
@@ -90,8 +90,11 @@ describe('login', () => {
 });
 
 describe('termine', () => {
+  const add = (cookie: string, date: string) => fetch(`${base}/api/termine`, json(cookie, 'POST', { action: 'add', date }));
+
   it('lets everybody answer, shows the same data to all, and keeps it in a spreadsheet', async () => {
     const m = (await login('mischer', 'mischer-password')).cookie, a = (await login('admin', 'admin-password')).cookie;
+    await add(a, '2030-01-06');
     expect((await fetch(`${base}/api/termine`, json(m, 'POST', { action: 'vote', date: '2030-01-06', sign: 'jd', answer: 'yes' }))).status).toBe(200);
     await fetch(`${base}/api/termine`, json(a, 'POST', { action: 'vote', date: '2030-01-06', sign: 'MK', answer: 'maybe' }));
     const seen = await (await fetch(`${base}/api/termine`, as(m))).json();
@@ -101,6 +104,7 @@ describe('termine', () => {
 
   it('keeps simultaneous answers', async () => {
     const m = (await login('mischer', 'mischer-password')).cookie;
+    await add((await login('admin', 'admin-password')).cookie, '2030-02-03');
     const signs = ['AA', 'BB', 'CC', 'DD', 'EE', 'FF', 'GG', 'HH'];
     const res = await Promise.all(signs.map(sign => fetch(`${base}/api/termine`, json(m, 'POST', { action: 'vote', date: '2030-02-03', sign, answer: 'yes' }))));
     expect(res.every(r => r.status === 200)).toBe(true);
@@ -118,14 +122,27 @@ describe('termine', () => {
 
   it('lets the admin delete a date, but not the mischer', async () => {
     const m = (await login('mischer', 'mischer-password')).cookie, a = (await login('admin', 'admin-password')).cookie;
+    await add(a, '2030-04-07');
     await fetch(`${base}/api/termine`, json(m, 'POST', { action: 'vote', date: '2030-04-07', sign: 'JD', answer: 'yes' }));
     expect((await fetch(`${base}/api/termine`, json(m, 'POST', { action: 'delete', date: '2030-04-07' }))).status).toBe(403);
     expect((await fetch(`${base}/api/termine`, json(a, 'POST', { action: 'delete', date: '2030-04-07' }))).status).toBe(200);
     expect((await (await fetch(`${base}/api/termine`, as(m))).json()).dates['2030-04-07']).toBeUndefined();
   });
 
+  it('only lets the admin choose the dates, and only dates on the list can be answered', async () => {
+    const m = (await login('mischer', 'mischer-password')).cookie, a = (await login('admin', 'admin-password')).cookie;
+    expect((await add(m, '2030-05-05')).status).toBe(403);
+    const vote = { action: 'vote', date: '2030-05-05', sign: 'JD', answer: 'yes' };
+    const refused = await fetch(`${base}/api/termine`, json(m, 'POST', vote));
+    expect([refused.status, await refused.text()]).toEqual([400, 'unknown date']);
+    expect((await add(a, '2030-05-05')).status).toBe(200);
+    expect((await (await fetch(`${base}/api/termine`, as(m))).json()).dates['2030-05-05']).toMatchObject({ votes: {} }); // listed without any answers
+    expect((await fetch(`${base}/api/termine`, json(m, 'POST', vote))).status).toBe(200);
+  });
+
   it('rejects invalid input', async () => {
     const a = (await login('admin', 'admin-password')).cookie;
+    await add(a, '2030-03-03');
     expect((await fetch(`${base}/api/termine`, json(a, 'POST', { action: 'vote', date: '2030-13-01', sign: 'JD', answer: 'yes' }))).status).toBe(400);
     expect((await fetch(`${base}/api/termine`, json(a, 'POST', { action: 'vote', date: '2030-03-03', sign: '', answer: 'yes' }))).status).toBe(400);
     expect((await fetch(`${base}/api/termine`, { method: 'POST', headers: { Cookie: a }, body: '{}' })).status).toBe(415);
@@ -147,8 +164,23 @@ describe('termine', () => {
     expect((await readFile(join(dir, 'data/termine.backup.xlsx'))).length).toBeGreaterThan(0);
   });
 
+  it('offers a template with the coming Sundays (admin only) that keeps the existing dates', async () => {
+    const m = (await login('mischer', 'mischer-password')).cookie, a = (await login('admin', 'admin-password')).cookie;
+    expect((await fetch(`${base}/api/termine/template`, as(m))).status).toBe(403);
+    const res = await fetch(`${base}/api/termine/template`, as(a));
+    expect(res.headers.get('content-disposition')).toContain('termine-vorlage.xlsx');
+    const { data } = await readTermineXlsx(new Blob([await res.arrayBuffer()]));
+    const dates = Object.keys(data.dates);
+    expect(dates.length).toBeGreaterThanOrEqual(52);
+    expect(dates).toContain('2031-05-04');                       // existing (imported in the test above)
+    expect(data.dates['2031-05-04'].votes).toEqual({ XY: 'no' }); // with its answers
+    const sundaysOnly = dates.filter(d => d !== '2031-05-04');
+    expect(sundaysOnly.every(d => new Date(`${d}T12:00:00Z`).getUTCDay() === 0)).toBe(true);
+  });
+
   it('never overwrites a spreadsheet it cannot read', async () => {
     const a = (await login('admin', 'admin-password')).cookie;
+    await add(a, '2030-01-06');
     const file = join(dir, 'data/termine.xlsx');
     const before = await readFile(file);
     await writeFile(file, 'not a spreadsheet');

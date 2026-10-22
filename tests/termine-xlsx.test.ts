@@ -9,6 +9,7 @@ const sample = (): TermineData => ({
     '2026-10-25': { title: 'Abendmahl', time: '10:00', assigned: 'JD, MK', note: 'Zeile 1\nZeile 2', votes: { JD: 'yes', MK: 'maybe' } },
     '2026-12-24': { title: '', time: '', assigned: '', note: '', votes: { MK: 'no' } },
     '2027-01-03': { title: 'Neujahr', time: '', assigned: '', note: '', votes: {} },
+    '2027-01-10': { title: '', time: '', assigned: '', note: '', votes: {} }, // just a date on the list
   },
 });
 
@@ -24,6 +25,19 @@ describe('termine xlsx', () => {
     expect(rows[0]).toEqual(['Datum', 'Wochentag', 'Uhrzeit', 'Anlass', 'Eingeteilt', 'Hinweis', 'JD', 'MK']);
     expect(rows[1].slice(1)).toEqual(['Sonntag', '10:00', 'Abendmahl', 'JD, MK', 'Zeile 1\nZeile 2', 'Ja', 'Vielleicht']);
     expect(rows[2].slice(1)).toEqual(['Donnerstag', null, null, null, null, null, 'Nein']);
+  });
+
+  it('lists a row with nothing but a date (a template with all Sundays)', async () => {
+    const rows = await readSheet(await writeTermineXlsx(sample()));
+    expect(rows[4].slice(0, 2)).toEqual([new Date(Date.UTC(2027, 0, 10)), 'Sonntag']);
+    const blank = await writeExcelFile([
+      ['Datum', 'Wochentag', 'Uhrzeit', 'Anlass', 'Eingeteilt', 'Hinweis'],
+      [{ value: new Date(Date.UTC(2026, 10, 1)), format: 'dd.mm.yyyy' }, 'Sonntag', null, null, null, null],
+      ['08.11.2026', null, null, null, null, null],
+    ] as never).toBlob();
+    const { data, skipped } = await readTermineXlsx(blank);
+    expect(Object.keys(data.dates)).toEqual(['2026-11-01', '2026-11-08']);
+    expect(skipped).toBe(0);
   });
 
   it('writes an empty list as a header-only sheet', async () => {

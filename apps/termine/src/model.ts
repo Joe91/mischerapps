@@ -15,7 +15,9 @@ export interface DateEntry {
 
 export interface TermineData { dates: Record<string, DateEntry>; }
 
+/** The list of dates is chosen by the admin: a date exists once it has a row, even without any details or answers. */
 export type Op =
+  | { action: 'add'; date: string }
   | { action: 'vote'; date: string; sign: string; answer: Answer | null }
   | { action: 'update'; date: string; title: string; time: string; assigned: string; note: string }
   | { action: 'delete'; date: string };
@@ -42,39 +44,42 @@ export function normalizeSign(s: string): string {
   return /^[\p{L}\p{N}]{1,6}$/u.test(v) ? v : '';
 }
 
-/** `count` Sundays starting with the first Sunday on or after `from` (or before it, for negative offsets). */
-export function sundays(from: Date, count: number, offsetWeeks = 0): string[] {
+/** `count` Sundays starting with the first Sunday on or after `from`. */
+export function sundays(from: Date, count: number): string[] {
   const d = new Date(from.getFullYear(), from.getMonth(), from.getDate());
-  d.setDate(d.getDate() + ((7 - d.getDay()) % 7) + offsetWeeks * 7);
+  d.setDate(d.getDate() + ((7 - d.getDay()) % 7));
   return Array.from({ length: count }, (_, i) => isoDate(new Date(d.getFullYear(), d.getMonth(), d.getDate() + i * 7)));
 }
-
-export const isBlank = (e: DateEntry) => !e.title && !e.time && !e.assigned && !e.note && !Object.keys(e.votes).length;
 
 export class OpError extends Error {}
 
 /** Applies one change in place. Throws OpError for invalid input (→ HTTP 400). */
 export function applyOp(data: TermineData, op: Op): TermineData {
   if (!op || typeof op !== 'object' || !isValidDate(String(op.date))) throw new OpError('bad date');
-  const entry = data.dates[op.date] ?? emptyEntry();
   if (op.action === 'delete') {
     delete data.dates[op.date];
     return data;
   }
+  if (op.action === 'add') {
+    data.dates[op.date] ??= emptyEntry();
+    return data;
+  }
   if (op.action === 'vote') {
+    // only dates the admin has put on the list can be answered (a page that is out of date must not bring a deleted date back)
+    const entry = data.dates[op.date];
+    if (!entry) throw new OpError('unknown date');
     const sign = normalizeSign(String(op.sign ?? ''));
     if (!sign) throw new OpError('bad sign');
     if (op.answer === null) delete entry.votes[sign];
     else if (ANSWERS.includes(op.answer)) entry.votes[sign] = op.answer;
     else throw new OpError('bad answer');
   } else if (op.action === 'update') {
+    const entry = data.dates[op.date] ??= emptyEntry();
     for (const k of ['title', 'time', 'assigned', 'note'] as const) {
       entry[k] = String(op[k] ?? '').trim().slice(0, LIMITS[k]);
     }
   } else {
     throw new OpError('bad action');
   }
-  if (isBlank(entry)) delete data.dates[op.date];
-  else data.dates[op.date] = entry;
   return data;
 }

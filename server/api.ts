@@ -165,6 +165,12 @@ export function createApi(cfg: ServerConfig) {
         'Content-Type': XLSX_MIME, 'Content-Disposition': 'attachment; filename="termine.xlsx"',
       });
     }
+    if (path === '/api/termine/template' && method === 'GET') {
+      admin();
+      return send(res, 200, await termine.templateXlsx(), {
+        'Content-Type': XLSX_MIME, 'Content-Disposition': 'attachment; filename="termine-vorlage.xlsx"',
+      });
+    }
     if (path === '/api/termine/import' && post) {
       admin();
       let result;

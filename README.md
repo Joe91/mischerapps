@@ -58,6 +58,10 @@ data/predigten/            hochgeladene MP3-Dateien
 data/.session-secret       Schlüssel für die Anmelde-Cookies (wird automatisch angelegt)
 ```
 
+Auf dem NAS ist das `/volume1/docker/mischer/data/` (File Station: `docker` → `mischer` → `data`). Die Dateien entstehen erst bei Bedarf:
+`termine.xlsx` bei der ersten Änderung an den Terminen, `settings.json` beim ersten Speichern der Einstellungen, `predigten/` beim ersten
+Upload. Dateien mit Punkt am Anfang (`.session-secret`) zeigt File Station nur an, wenn „Versteckte Dateien anzeigen“ aktiv ist.
+
 ### Gut zu wissen
 
 - **Port nicht freigeben:** `9120` gehört nur hinter den Reverse-Proxy (nicht am Router weiterleiten). Sonst könnten Absender die
@@ -74,6 +78,9 @@ data/.session-secret       Schlüssel für die Anmelde-Cookies (wird automatisch
 - **`termine.xlsx` am NAS direkt bearbeiten** geht, aber wer genau dann antwortet, wenn die Datei gespeichert wird, kann überschrieben
   werden. Sicherer: in der App herunterladen, bearbeiten, wieder hochladen.
 - Baut Portainer das Image nicht (Fehler „image not found“): auf dem NAS per SSH im geklonten Ordner `docker compose up -d --build`.
+- Meldet Portainer beim Aktualisieren „pull access denied for mischer-app“: Das Image gibt es nur lokal, nicht bei Docker Hub. Die
+  Compose-Datei hat deshalb keinen `image:`-Namen (dann überspringt der Pull-Schritt es); bei einem älteren Stand `image:` entfernen
+  oder beim Neu-Deployen „Re-pull image“ aus- und „Re-build image“ einschalten.
 
 ### Konfiguration
 
@@ -105,9 +112,14 @@ oder `Nein`:
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | 25.10.2026 | Sonntag | 10:00 | Abendmahl | JD, MK | … | Ja | Vielleicht |
 
-- Der Admin kann in der App Termine bearbeiten oder löschen und mit „+ Weiterer Termin“ einen Termin an einem anderen Tag anlegen
-  (z. B. Karfreitag). **Einstellungen → Tabelle** lädt die Excel-Datei herunter bzw. ersetzt mit einer hochgeladenen Datei
-  *alle* Termine (der alte Stand bleibt als `termine.backup.xlsx` liegen).
+- **Die Zeilen der Tabelle sind die Termine der App.** Es gibt keine automatisch erzeugten Sonntage: Was nicht in der Tabelle steht,
+  erscheint nicht – und beantwortet werden kann nur, was dort steht. Eine Zeile mit nur einem Datum genügt.
+- **Termine auswählen:** *Einstellungen → Termine (Excel) → ⬇ Vorlage mit allen Sonntagen* lädt eine Tabelle mit den bisherigen Terminen
+  (samt Antworten) und den nächsten 52 Sonntagen. Zeilen von Sonntagen, an denen nichts anliegt, in Excel löschen, speichern und mit
+  *⬆ Hochladen* wieder einspielen. Zusätzlich kann der Admin mit „+ Termin hinzufügen“ einzelne Tage anlegen (Sonntag oder z. B. Karfreitag)
+  und Termine in der App bearbeiten oder löschen.
+- *Aktuelle Tabelle* lädt die Excel-Datei so herunter, wie sie auf dem Server liegt. Das Hochladen ersetzt *alle* Termine
+  (der alte Stand bleibt als `termine.backup.xlsx` liegen).
 - Die Datei darf auch direkt auf dem NAS bearbeitet werden; der Server liest sie bei jeder Anfrage neu. Verstanden werden
   `j`/`n`/`?` als Antworten, Datumsfelder oder Text wie `25.10.2026` / `2026-10-25`, Uhrzeiten als Text oder Zeitfeld.
   „Wochentag“ wird ignoriert; die Spalten A–F müssen an ihrer Stelle bleiben. Zeilen ohne gültiges Datum werden ignoriert
@@ -115,7 +127,7 @@ oder `Nein`:
 - Eine kaputte `termine.xlsx` wird nie überschrieben: Die App meldet dann einen Serverfehler, bis die Datei repariert
   oder gelöscht ist.
 - Gleichzeitige Antworten gehen nicht verloren: Der Server führt Änderungen nacheinander aus und schreibt die Datei atomar.
-- Angezeigt werden die nächsten 12 Sonntage (Admin: einstellbar), ältere per „Ältere anzeigen“. Die Liste aktualisiert sich jede Minute.
+- Angezeigt werden alle kommenden Termine der Tabelle, vergangene per „Ältere anzeigen“. Die Liste aktualisiert sich jede Minute.
 - Wer antwortet, trägt oben sein Kürzel ein (bleibt im Browser). Wer mit welchem Kürzel antwortet, wird nicht geprüft –
   gedacht für ein kleines, vertrautes Team.
 
