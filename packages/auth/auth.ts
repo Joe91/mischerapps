@@ -24,7 +24,7 @@ export async function logout() {
 }
 
 /** Resolves with the session once the user is logged in; shows the login form if necessary. */
-export async function ensureLogin(appTitle = 'Audio-Werkzeuge'): Promise<Session> {
+export async function ensureLogin(appTitle = 'Mischer-Apps'): Promise<Session> {
   for (;;) {
     try {
       current = await fetchSession() ?? await askForLogin(appTitle);

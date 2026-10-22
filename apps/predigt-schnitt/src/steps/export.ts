@@ -1,9 +1,9 @@
 import { h, fmtTime, fmtNum, fmtBytes, progressBar, download } from '../../../../packages/ui-kit/dom';
 import type { Tags } from '../../../../packages/audio-core/pipeline';
-import { processOptions, encodeOptions, measurementKey, type Ctx, type Step } from '../context';
-import { EXPORT_PRESETS, LOUDNESS_PRESETS, type ExportPresetId } from '../settings';
+import { choices, processOptions, encodeOptions, measurementKey, STEP, type Ctx, type Step } from '../context';
+import { EXPORT_PRESETS, LOUDNESS_PRESETS } from '../settings';
 import { buildFileName, sanitizeFileName } from '../naming';
-import { ensureMeasurement } from './loudness';
+import { createAdvancedPanel, createMeasureView, ensureMeasurement } from './loudness';
 
 async function coverFromDataUrl(dataUrl: string): Promise<Tags['cover']> {
   if (!dataUrl) return undefined;
@@ -36,8 +36,42 @@ export function createExportStep(ctx: Ctx): Step {
     onclick: () => { st.fileNameEdited = false; updateName(); },
   }, '↺');
 
-  const preset = h('select', null, ...(Object.keys(EXPORT_PRESETS) as ExportPresetId[]).map(k => h('option', { value: k }, EXPORT_PRESETS[k].label)));
-  preset.addEventListener('change', () => { s.exportPreset = preset.value as ExportPresetId; ctx.saveSettings(); ctx.changed(); markStale(); });
+  // Loudness, compression and format come from the admin's defaults and are applied automatically;
+  // the advanced view overrides them for this recording only.
+  const measure = createMeasureView(ctx);
+  const advanced = createAdvancedPanel(ctx, optionsChanged);
+  const summary = h('span', { class: 'muted small' });
+  const advancedBtn = h('button', { class: 'btn btn-sm btn-ghost', type: 'button', onclick: () => setAdvanced(!st.advanced) }, '⚙ Erweitert');
+
+  function setAdvanced(on: boolean) {
+    st.advanced = on;
+    if (!on) st.overrides = {}; // closing the view returns to the defaults
+    showAdvanced();
+    optionsChanged();
+  }
+
+  function showAdvanced() {
+    advancedBtn.setAttribute('aria-expanded', String(st.advanced));
+    advancedBtn.classList.toggle('active', st.advanced);
+    advanced.el.classList.toggle('hidden', !st.advanced);
+    if (st.advanced) advanced.sync();
+    showSummary();
+  }
+
+  function showSummary() {
+    const c = choices(ctx), lp = LOUDNESS_PRESETS[c.loudnessPreset], ep = EXPORT_PRESETS[c.exportPreset];
+    summary.textContent = 'Wird automatisch angepasst: ' + [
+      `Lautheit ${fmtNum(lp.lufs, 0)} LUFS`, c.highpass && 'Hochpass', c.compressor && 'Kompression',
+      `MP3 ${ep.channels === 1 ? 'Mono' : 'Stereo'}, ${ep.kbps} kbps`,
+    ].filter(Boolean).join(' · ');
+  }
+
+  function optionsChanged() {
+    showSummary();
+    ctx.changed();
+    markStale();
+    measure.run();
+  }
 
   function updateName() {
     if (!st.fileNameEdited) st.fileName = buildFileName(s.namePattern, st.meta);
@@ -51,7 +85,7 @@ export function createExportStep(ctx: Ctx): Step {
     year: Number(st.meta.date.slice(0, 4)) || undefined,
     comment: [st.meta.scripture.trim(), st.meta.date].filter(Boolean).join(' · ') || undefined,
   });
-  const renderKey = () => JSON.stringify({ o: processOptions(ctx), p: s.exportPreset, t: tags(), c: s.coverDataUrl.length });
+  const renderKey = () => JSON.stringify({ o: processOptions(ctx), p: choices(ctx).exportPreset, t: tags(), c: s.coverDataUrl.length });
 
   function markStale() {
     if (st.rendered && st.rendered.key !== renderKey()) {
@@ -72,7 +106,7 @@ export function createExportStep(ctx: Ctx): Step {
       const needMeasure = !(st.measurement && st.measurementKey === measurementKey(o, encodeOptions(ctx)));
       const split = needMeasure ? 0.4 : 0;
       const m = await ensureMeasurement(ctx, p => bar.set(p * split, 'Lautheit messen …'));
-      const ep = EXPORT_PRESETS[s.exportPreset];
+      const ep = EXPORT_PRESETS[choices(ctx).exportPreset];
       const key = renderKey();
       const t = { ...tags(), cover: await coverFromDataUrl(s.coverDataUrl) };
       let r = await ctx.worker.render(o, m, { kbps: ep.kbps }, t, p => bar.set(split + p * (1 - split), 'Bearbeiten & kodieren …'));
@@ -109,7 +143,7 @@ export function createExportStep(ctx: Ctx): Step {
   function showResult() {
     const r = st.rendered;
     if (!r) { result.replaceChildren(); return; }
-    const target = LOUDNESS_PRESETS[s.loudnessPreset];
+    const target = LOUDNESS_PRESETS[choices(ctx).loudnessPreset];
     const tpOk = r.stats.truePeakDb <= target.tp + 0.05;
     result.replaceChildren(
       h('div', { class: 'notice warn stale hidden' }, 'Einstellungen oder Angaben wurden geändert – bitte erneut exportieren, damit die Datei aktuell ist.'),
@@ -124,7 +158,7 @@ export function createExportStep(ctx: Ctx): Step {
       ),
       h('div', { class: 'actions' },
         h('button', { class: 'btn', type: 'button', onclick: () => download(r.blob, st.fileName) }, '⬇ Herunterladen'),
-        h('button', { class: 'btn btn-primary', type: 'button', onclick: () => ctx.goto(4) }, 'Weiter zum Upload →'),
+        h('button', { class: 'btn btn-primary', type: 'button', onclick: () => ctx.goto(STEP.upload) }, 'Weiter zum Upload →'),
       ),
     );
     markStale();
@@ -133,14 +167,14 @@ export function createExportStep(ctx: Ctx): Step {
   const exportBtn = h('button', { class: 'btn btn-primary', type: 'button', onclick: run }, 'MP3 exportieren');
 
   const el = h('section', { class: 'card' },
-    h('div', { class: 'card-head' }, h('h2', null, '4 · Export')),
+    h('div', { class: 'card-head' }, h('h2', null, '3 · Export')),
     h('div', { class: 'grid' }, title.label, preacher.label, date.label, scripture.label, album.label),
-    h('div', { class: 'grid', style: 'margin-top:.8rem' },
-      h('label', null, 'Format', preset),
-      h('label', null, 'Dateiname', h('div', { class: 'row nowrap' }, nameInput, resetName)),
-    ),
+    h('label', { class: 'file-name' }, 'Dateiname', h('div', { class: 'row nowrap' }, nameInput, resetName)),
+    h('div', { class: 'row options' }, summary, h('span', { class: 'spacer' }), advancedBtn),
+    advanced.el,
+    measure.el,
     h('div', { class: 'actions' },
-      h('button', { class: 'btn', type: 'button', onclick: () => ctx.goto(2) }, '← Lautheit'),
+      h('button', { class: 'btn', type: 'button', onclick: () => ctx.goto(STEP.cut) }, '← Schnitt'),
       exportBtn),
     status,
     result,
@@ -151,8 +185,9 @@ export function createExportStep(ctx: Ctx): Step {
     enter() {
       title.input.value = st.meta.title; preacher.input.value = st.meta.preacher; date.input.value = st.meta.date;
       scripture.input.value = st.meta.scripture; album.input.value = st.meta.album;
-      preset.value = s.exportPreset;
       updateName();
+      showAdvanced();
+      measure.run(); // gain and compression are worked out while the details are filled in
       if (!st.rendered) { result.replaceChildren(); status.replaceChildren(); }
       else showResult();
     },

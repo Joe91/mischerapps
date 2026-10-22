@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { buildFileName, isValidFileName, lastSunday, sanitizeFileName, slug } from '../apps/predigt-schnitt/src/naming';
+import { defaultSettings } from '../apps/predigt-schnitt/src/settings';
+import { buildFileName, isValidFileName, lastSunday, sanitizeFileName, shortDate, slug } from '../apps/predigt-schnitt/src/naming';
 
 describe('naming', () => {
   const meta = { title: 'Predigt über Lukas 18', preacher: 'Jörg Müller', date: '2026-10-25', scripture: 'Lk 18,1-8', album: 'St. Johannis' };
@@ -15,6 +16,14 @@ describe('naming', () => {
     expect(buildFileName('{datum}_{titel}', meta)).toBe('2026-10-25_Predigt-ueber-Lukas-18.mp3');
     expect(buildFileName('{datum}_{prediger}_{bibelstelle}', meta)).toBe('2026-10-25_Joerg-Mueller_Lk-18-1-8.mp3');
     expect(buildFileName('{datum}_{titel}', { ...meta, title: '' })).toBe('2026-10-25.mp3');
+  });
+
+  it('names the sermon predigt-eag-JJMMDD by default', () => {
+    expect(defaultSettings().namePattern).toBe('predigt-eag-{jjmmdd}');
+    expect(buildFileName(defaultSettings().namePattern, { ...meta, date: '2026-07-12' })).toBe('predigt-eag-260712.mp3');
+    expect(shortDate('2026-07-12')).toBe('260712');
+    expect(shortDate('')).toBe('');
+    expect(buildFileName('predigt-eag-{jjmmdd}', { ...meta, date: '' })).toBe('predigt-eag.mp3');
   });
 
   it('always yields names the upload script accepts', () => {

@@ -53,35 +53,59 @@ export interface Settings {
   coverDataUrl: string;
   minSermonMin: number;
   mergeGapSec: number;
+  /** SETTINGS_REV the values were saved with */
+  rev: number;
 }
+
+/** The processing options the admin sets as defaults; a recording may override them in the advanced view. */
+export const CHOICE_KEYS = ['loudnessPreset', 'exportPreset', 'highpass', 'compressor', 'fadeIn', 'fadeOut'] as const satisfies readonly (keyof Settings)[];
+export type Choices = Pick<Settings, typeof CHOICE_KEYS[number]>;
 
 export function defaultSettings(): Settings {
   return {
     profiles: [{ ...SERVER_PROFILE }],
     activeProfileId: SERVER_PROFILE.id,
     loudnessPreset: 'mono19',
-    exportPreset: 'speech64',
+    exportPreset: 'speech96',
     highpass: true,
-    compressor: false,
+    compressor: true,
     fadeIn: 0.5,
     fadeOut: 1.5,
     maxGainDb: 20,
-    namePattern: 'predigt_eag_{datum}',
+    namePattern: 'predigt-eag-{jjmmdd}',
     congregation: '',
     preacher: '',
     titlePrefix: 'Predigt',
     coverDataUrl: '',
     minSermonMin: 8,
     mergeGapSec: 8,
+    rev: SETTINGS_REV,
   };
 }
 
-export const settingsStore = createStore<Settings>('audio-tools.predigt-schnitt.settings.v1', defaultSettings);
+/** Raised when changed defaults should replace what browsers and the server saved before. */
+export const SETTINGS_REV = 2;
+
+/**
+ * Saved values (browser, server, imported file) from an older revision: drops those whose default has
+ * changed since, so the new default applies. Rev 2: "Sprache hoch" with compression, names predigt-eag-JJMMDD.
+ */
+export function upgradeStored(stored: unknown): unknown {
+  if (!stored || typeof stored !== 'object') return stored;
+  const values = { ...stored } as Record<string, unknown>;
+  if (values.rev === SETTINGS_REV) return values;
+  delete values.exportPreset;
+  delete values.compressor;
+  if (values.namePattern === 'predigt_eag_{datum}') delete values.namePattern;
+  return { ...values, rev: SETTINGS_REV };
+}
+
+export const settingsStore = createStore<Settings>('audio-tools.predigt-schnitt.settings.v1', defaultSettings, upgradeStored);
 
 /** Keys the admin sets for everybody; they live on the server (the upload targets stay per browser). */
 export const SHARED_KEYS = [
   'loudnessPreset', 'exportPreset', 'highpass', 'compressor', 'fadeIn', 'fadeOut', 'maxGainDb', 'namePattern',
-  'congregation', 'preacher', 'titlePrefix', 'coverDataUrl', 'minSermonMin', 'mergeGapSec',
+  'congregation', 'preacher', 'titlePrefix', 'coverDataUrl', 'minSermonMin', 'mergeGapSec', 'rev',
 ] as const satisfies readonly (keyof Settings)[];
 
 export const sharedPart = (s: Settings) => Object.fromEntries(SHARED_KEYS.map(k => [k, s[k]]));

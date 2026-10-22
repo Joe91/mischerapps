@@ -3,7 +3,7 @@ import { isAdmin } from '../../../../packages/auth/auth';
 import { uploadFile } from '../../../../packages/upload/http-upload';
 import { uploadToCloud } from '../../../../packages/upload/cloud-upload';
 import { UPLOAD_KINDS, profileKind, SERVER_PROFILE } from '../settings';
-import type { Ctx, Step } from '../context';
+import { STEP, type Ctx, type Step } from '../context';
 import { isValidFileName, sanitizeFileName } from '../naming';
 
 export function createUploadStep(ctx: Ctx): Step {
@@ -70,15 +70,15 @@ export function createUploadStep(ctx: Ctx): Step {
     h('label', null, 'Dateiname', nameInput),
   );
   const el = h('section', { class: 'card' },
-    h('div', { class: 'card-head' }, h('h2', null, '5 · Upload')),
+    h('div', { class: 'card-head' }, h('h2', null, '4 · Upload')),
     profileRow, target,
     h('div', { class: 'actions' },
-      h('button', { class: 'btn', type: 'button', onclick: () => ctx.goto(3) }, '← Export'),
+      h('button', { class: 'btn', type: 'button', onclick: () => ctx.goto(STEP.export) }, '← Export'),
       h('button', { class: 'btn', type: 'button', onclick: () => ctx.state.rendered && download(ctx.state.rendered.blob, sanitizeFileName(nameInput.value)) }, '⬇ Herunterladen'),
       uploadBtn),
     status,
     h('div', { class: 'actions' },
-      h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => ctx.goto(0) }, 'Nächste Aufnahme bearbeiten')),
+      h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => ctx.goto(STEP.load) }, 'Nächste Aufnahme bearbeiten')),
   );
 
   return {

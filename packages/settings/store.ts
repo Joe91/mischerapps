@@ -24,12 +24,13 @@ function merge<T>(defaults: T, value: unknown): T {
   return (typeof value === typeof defaults ? value : defaults) as T;
 }
 
-export function createStore<T>(key: string, defaults: () => T): Store<T> {
+/** `upgrade` sees the stored (or imported) values before they are merged with the defaults. */
+export function createStore<T>(key: string, defaults: () => T, upgrade: (stored: unknown) => unknown = v => v): Store<T> {
   return {
     load() {
       try {
         const raw = localStorage.getItem(key);
-        return raw ? merge(defaults(), JSON.parse(raw)) : defaults();
+        return raw ? merge(defaults(), upgrade(JSON.parse(raw))) : defaults();
       } catch {
         return defaults();
       }
@@ -42,7 +43,7 @@ export function createStore<T>(key: string, defaults: () => T): Store<T> {
     },
     importJson(text) {
       const parsed = JSON.parse(text);
-      return merge(defaults(), parsed?.settings ?? parsed);
+      return merge(defaults(), upgrade(parsed?.settings ?? parsed));
     },
   };
 }

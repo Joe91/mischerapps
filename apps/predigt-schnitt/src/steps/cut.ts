@@ -3,7 +3,7 @@ import RegionsPlugin, { type Region } from 'wavesurfer.js/plugins/regions';
 import TimelinePlugin from 'wavesurfer.js/plugins/timeline';
 import { h, fmtTime, parseTime } from '../../../../packages/ui-kit/dom';
 import type { AnalyzeOutput } from '../../../../packages/audio-core/pipeline';
-import type { Ctx, Step } from '../context';
+import { STEP, type Ctx, type Step } from '../context';
 
 type Which = 'start' | 'end';
 const css = (name: string) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -278,7 +278,7 @@ export function createCutStep(ctx: Ctx): Step {
       'Tastatur: Leertaste Abspielen/Pause · S / E setzt Start / Ende an die Abspielposition · ← → verschiebt den aktiven Marker um 0,1 s (mit Umschalt 1 s) · P hört den aktiven Marker vor. ',
       'Der orange Bereich lässt sich im Wellenbild verschieben und an den Rändern ziehen.'),
     h('div', { class: 'actions' },
-      h('button', { class: 'btn btn-primary', type: 'button', onclick: () => ctx.goto(2) }, 'Weiter zur Lautheit →')),
+      h('button', { class: 'btn btn-primary', type: 'button', onclick: () => ctx.goto(STEP.export) }, 'Weiter zum Export →')),
   );
 
   return {

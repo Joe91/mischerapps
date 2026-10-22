@@ -1,6 +1,6 @@
 import type { AudioWorkerClient } from '../../../packages/audio-core/client';
 import type { AnalyzeOutput, EncodeOptions, Measurement, ProcessOptions, RenderResult } from '../../../packages/audio-core/pipeline';
-import { EXPORT_PRESETS, LOUDNESS_PRESETS, type Settings } from './settings';
+import { CHOICE_KEYS, EXPORT_PRESETS, LOUDNESS_PRESETS, type Choices, type Settings } from './settings';
 import type { Meta } from './naming';
 
 export interface Rendered {
@@ -20,11 +20,18 @@ export interface AppState {
   meta: Meta;
   fileName: string;
   fileNameEdited: boolean;
+  /** advanced view open: the processing options below may differ from the admin's defaults */
+  advanced: boolean;
+  /** options changed in the advanced view for this recording; everything else follows the defaults */
+  overrides: Partial<Choices>;
   measurement: Measurement | null;
   measurementKey: string;
   rendered: Rendered | null;
   uploadedAs: string | null;
 }
+
+/** Wizard steps in navigation order (the cut is followed directly by the export: loudness is applied automatically). */
+export const STEP = { load: 0, cut: 1, export: 2, upload: 3 } as const;
 
 export interface Step {
   el: HTMLElement;
@@ -44,17 +51,24 @@ export interface Ctx {
   resetForNewFile(): void;
 }
 
+/** The admin's defaults with this recording's overrides on top. */
+export function choices(ctx: Ctx): Choices {
+  const c = { ...ctx.state.overrides } as Record<string, unknown>;
+  for (const k of CHOICE_KEYS) c[k] ??= ctx.settings[k];
+  return c as Choices;
+}
+
 export function processOptions(ctx: Ctx): ProcessOptions {
-  const s = ctx.settings, lp = LOUDNESS_PRESETS[s.loudnessPreset], ep = EXPORT_PRESETS[s.exportPreset];
+  const c = choices(ctx), lp = LOUDNESS_PRESETS[c.loudnessPreset], ep = EXPORT_PRESETS[c.exportPreset];
   return {
     start: ctx.state.start, end: ctx.state.end, channels: ep.channels,
-    targetLufs: lp.lufs, truePeakDb: lp.tp, highpass: s.highpass, compressor: s.compressor,
-    fadeIn: s.fadeIn, fadeOut: s.fadeOut, maxGainDb: s.maxGainDb,
+    targetLufs: lp.lufs, truePeakDb: lp.tp, highpass: c.highpass, compressor: c.compressor,
+    fadeIn: c.fadeIn, fadeOut: c.fadeOut, maxGainDb: ctx.settings.maxGainDb,
   };
 }
 
 export function encodeOptions(ctx: Ctx): EncodeOptions {
-  return { kbps: EXPORT_PRESETS[ctx.settings.exportPreset].kbps };
+  return { kbps: EXPORT_PRESETS[choices(ctx).exportPreset].kbps };
 }
 
 /** Key over everything that influences the measurement (the bitrate affects the peak ceiling). */

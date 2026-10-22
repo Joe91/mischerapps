@@ -1,5 +1,5 @@
 import { h, fmtTime, fmtBytes, progressBar, toast } from '../../../../packages/ui-kit/dom';
-import type { Ctx, Step } from '../context';
+import { STEP, type Ctx, type Step } from '../context';
 
 export function createLoadStep(ctx: Ctx): Step {
   const input = h('input', { type: 'file', accept: '.mp3,audio/mpeg', class: 'hidden' });
@@ -51,7 +51,7 @@ export function createLoadStep(ctx: Ctx): Step {
       bar.done();
       status.replaceChildren(h('p', { class: 'muted' },
         `${file.name} · ${fmtTime(out.info.duration, false)} · analysiert in ${((performance.now() - t0) / 1000).toFixed(1).replace('.', ',')} s`));
-      ctx.goto(1);
+      ctx.goto(STEP.cut);
     } catch (e) {
       bar.done();
       status.replaceChildren(h('div', { class: 'notice error' }, `Die Datei konnte nicht gelesen werden: ${(e as Error).message}`));
@@ -65,7 +65,7 @@ export function createLoadStep(ctx: Ctx): Step {
     h('div', { class: 'card-head' }, h('h2', null, '1 · Aufnahme laden')),
     drop, input, status,
     h('p', { class: 'muted small' },
-      'Die Datei wird nur in diesem Browser verarbeitet. Erst beim Upload (Schritt 5) verlässt das fertige MP3 den Rechner.'),
+      'Die Datei wird nur in diesem Browser verarbeitet. Erst beim Upload (Schritt 4) verlässt das fertige MP3 den Rechner.'),
   );
   return { el };
 }

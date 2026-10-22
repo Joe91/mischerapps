@@ -1,4 +1,4 @@
-# Audio-Werkzeuge – Predigt-Schnitt & Termine
+# Mischer-Apps – Predigt-Schnitt & Termine
 
 Zwei Apps unter einer Startseite, betrieben auf dem eigenen NAS (ein Docker-Container: Web-App + kleiner Server):
 
@@ -166,13 +166,17 @@ Die API (alle unter `/api`, Anmeldung per Cookie): `POST login` / `logout`, `GET
    Wellenform-Peaks, Merkmale für die Erkennung und ein Frame-Index für exaktes Springen.
 2. **Schnitt** – Vorschlag für Start/Ende als orange Region; Übersicht mit Sprache/Musik/Stille,
    Alternativ-Vorschläge, Vorhören, Feinjustieren (Tastatur: Leertaste, S/E, ←/→, Umschalt, P).
-3. **Lautheit** – Messung nach EBU R128 (BS.1770), Anhebung auf Ziel (Standard −19 LUFS mono),
-   Look-ahead-Limiter, optional Hochpass 80 Hz und sanfte Kompression. Ein einziger Dekodier-Durchlauf:
-   Die Eingangslautheit ist aus der Analyse schon bekannt; der Limiter läuft parallel mit drei Verstärkungen,
-   die passende wird interpoliert.
-4. **Export** – MP3 (LAME/WASM, CBR), ID3-Tags, Dateiname nach Schema `predigt_eag_{datum}`.
-   Die angezeigte Lautheit wird am fertigen MP3 gemessen.
-5. **Upload** – auf das NAS (Ordner `predigten` im Datenverzeichnis), mit Fortschritt; alternativ Herunterladen.
+3. **Export** – Titel, Prediger, Datum, Bibelstelle und Dateiname eintragen (Schema `predigt-eag-{jjmmdd}`,
+   z. B. `predigt-eag-260712.mp3`). Lautheit und Klang werden automatisch nach den Voreinstellungen des Admins
+   angepasst (Standard: −19 LUFS, Hochpass 80 Hz, sanfte Kompression 2:1, „Sprache hoch“ = Mono 96 kbps);
+   die Messung läuft schon im Hintergrund, während die Angaben ausgefüllt werden. **⚙ Erweitert** zeigt
+   Messwerte und erlaubt, Zielwert, Format, Ein-/Ausblenden, Hochpass und Kompression für diese eine Aufnahme
+   zu ändern (die Voreinstellungen bleiben unverändert; Schließen stellt sie wieder her).
+   Technik: Messung nach EBU R128 (BS.1770), Look-ahead-Limiter; ein einziger Dekodier-Durchlauf
+   (die Eingangslautheit ist aus der Analyse bekannt, der Limiter läuft parallel mit drei Verstärkungen,
+   die passende wird interpoliert). MP3 per LAME/WASM (CBR) mit ID3-Tags; die angezeigte Lautheit wird am
+   fertigen MP3 gemessen.
+4. **Upload** – auf das NAS (Ordner `predigten` im Datenverzeichnis), mit Fortschritt; alternativ Herunterladen.
    Vorhandene Dateien werden nie überschrieben. Der Admin kann zusätzlich einen Cloud-Ordner als Ziel eintragen.
 
 ## Zusätzliches Upload-Ziel: Cloud-Ordner (optional, nur Admin)

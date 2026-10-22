@@ -28,10 +28,16 @@ export function slug(text: string): string {
     .replace(/^[-.]+|[-.]+$/g, '');
 }
 
+/** 2026-07-12 → 260712 (JJMMDD); empty if the date is not a full ISO date. */
+export function shortDate(iso: string): string {
+  const m = /^\d\d(\d\d)-(\d\d)-(\d\d)$/.exec(iso);
+  return m ? m[1] + m[2] + m[3] : '';
+}
+
 /** Builds the file name from a pattern like "{datum}_{titel}". Always ends in .mp3, max 120 chars + extension. */
 export function buildFileName(pattern: string, m: Meta): string {
   const values: Record<string, string> = {
-    datum: m.date, titel: m.title, prediger: m.preacher, bibelstelle: m.scripture, gemeinde: m.album,
+    datum: m.date, jjmmdd: shortDate(m.date), titel: m.title, prediger: m.preacher, bibelstelle: m.scripture, gemeinde: m.album,
   };
   const name = pattern.replace(/\{(\w+)\}/g, (_, k: string) => slug(values[k.toLowerCase()] ?? ''))
     .replace(/[^A-Za-z0-9._-]+/g, '-')

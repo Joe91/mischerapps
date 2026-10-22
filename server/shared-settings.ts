@@ -10,6 +10,7 @@ export const SHARED_SETTINGS: Record<string, Record<string, Kind>> = {
     loudnessPreset: 'string', exportPreset: 'string', highpass: 'boolean', compressor: 'boolean',
     fadeIn: 'number', fadeOut: 'number', maxGainDb: 'number', namePattern: 'string', congregation: 'string',
     preacher: 'string', titlePrefix: 'string', coverDataUrl: 'string', minSermonMin: 'number', mergeGapSec: 'number',
+    rev: 'number',
   },
 };
 

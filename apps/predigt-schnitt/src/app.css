@@ -42,7 +42,14 @@
 .alts { margin: .25rem 0; }
 .keys { margin-top: .75rem; }
 
-/* ---- loudness ---- */
+/* ---- advanced options ---- */
+.file-name { margin-top: .8rem; max-width: 30rem; }
+.options { margin-top: .8rem; }
+.btn-ghost.active { background: var(--surface-2); }
+.advanced { margin-top: .6rem; padding: .8rem 1rem; border-radius: 10px; background: var(--surface-2); }
+.advanced .grid { margin-top: .4rem; }
+.lufs-flow:first-child { margin-top: .8rem; }
+
 .lufs-flow { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; margin: 1rem 0 .5rem; }
 .lufs-box { display: flex; flex-direction: column; padding: .55rem .9rem; border-radius: 10px; background: var(--surface-2); min-width: 8rem; }
 .lufs-box strong { font-size: 1.2rem; font-variant-numeric: tabular-nums; }

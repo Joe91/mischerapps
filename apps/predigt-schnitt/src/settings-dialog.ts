@@ -127,6 +127,8 @@ export function openSettings(ctx: Ctx, onSaved?: () => void) {
       }, '+ Ziel hinzufügen'),
     ),
     h('fieldset', null, h('legend', null, 'Voreinstellungen'),
+      h('p', { class: 'muted small' }, 'Diese Werte werden nach dem Schnitt automatisch angewendet. Im Export lassen sie sich über „Erweitert“ ' +
+        'für eine einzelne Aufnahme ändern (ohne die Voreinstellung zu verändern).'),
       h('div', { class: 'grid' },
         select('Lautheit', LOUDNESS_PRESETS, () => draft.loudnessPreset, v => { draft.loudnessPreset = v as LoudnessPresetId; }),
         select('Export-Format', EXPORT_PRESETS, () => draft.exportPreset, v => { draft.exportPreset = v as ExportPresetId; }),
@@ -144,7 +146,7 @@ export function openSettings(ctx: Ctx, onSaved?: () => void) {
         text('Gemeinde (Album)', () => draft.congregation, v => { draft.congregation = v; }),
         text('Prediger/in (Vorgabe)', () => draft.preacher, v => { draft.preacher = v; }),
       ),
-      h('p', { class: 'muted small' }, 'Platzhalter: {datum} (JJJJ-MM-TT) {titel} {prediger} {bibelstelle} {gemeinde}. Umlaute werden ersetzt (ä → ae).'),
+      h('p', { class: 'muted small' }, 'Platzhalter: {jjmmdd} (JJMMTT, z. B. 260712) {datum} (JJJJ-MM-TT) {titel} {prediger} {bibelstelle} {gemeinde}. Umlaute werden ersetzt (ä → ae).'),
       h('div', { class: 'row' }, h('label', null, 'Cover-Bild (optional, JPEG/PNG < 500 kB)', coverInput), coverPreview,
         h('button', { class: 'btn btn-sm btn-ghost', type: 'button', onclick: () => { draft.coverDataUrl = ''; coverInput.value = ''; showCover(); } }, 'Entfernen')),
     ),
