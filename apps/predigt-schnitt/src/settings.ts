@@ -1,22 +1,26 @@
 import { createStore } from '../../../packages/settings/store';
 import type { EncodeOptions } from '../../../packages/audio-core/pipeline';
 
-export type UploadKind = 'opencloud' | 'nextcloud' | 'http-post';
+export type UploadKind = 'server' | 'opencloud' | 'nextcloud';
 
 /**
- * An upload target. For cloud folders `url` is the public share link and `token` its password;
- * for 'http-post' (server/upload.php) the script URL and its token.
+ * An upload target. 'server' is this server (the NAS the app is served from); for cloud folders
+ * `url` is the public share link and `token` its password.
  */
 export interface UploadProfile { id: string; name: string; kind?: UploadKind; url: string; token: string; }
 
 export const UPLOAD_KINDS: Record<UploadKind, { label: string; url: string; urlHint: string; secret: string }> = {
   opencloud: { label: 'Cloud-Ordner (OpenCloud)', url: 'Freigabe-Link', urlHint: 'https://cloud.example.org/s/AbC123', secret: 'Link-Passwort' },
   nextcloud: { label: 'Cloud-Ordner (Nextcloud)', url: 'Freigabe-Link', urlHint: 'https://cloud.example.org/s/AbC123', secret: 'Link-Passwort' },
-  'http-post': { label: 'Upload-Skript (PHP)', url: 'Upload-URL', urlHint: 'https://example.org/upload.php', secret: 'Token' },
+  server: { label: 'Dieser Server (NAS)', url: 'Adresse', urlHint: '/api/upload', secret: '' },
 };
 
-/** Profiles saved before upload kinds existed are PHP-script targets. */
-export const profileKind = (p: UploadProfile): UploadKind => p.kind ?? 'http-post';
+/** The cloud kinds an admin can add as extra targets. */
+export const CLOUD_KINDS = { opencloud: UPLOAD_KINDS.opencloud, nextcloud: UPLOAD_KINDS.nextcloud };
+
+export const SERVER_PROFILE: UploadProfile = { id: 'server', name: 'NAS', kind: 'server', url: '/api/upload', token: '' };
+
+export const profileKind = (p: UploadProfile): UploadKind => p.kind ?? 'server';
 
 export const LOUDNESS_PRESETS = {
   mono19: { label: 'Podcast Mono (Standard) – −19 LUFS, −1,5 dBTP', lufs: -19, tp: -1.5 },
@@ -51,15 +55,10 @@ export interface Settings {
   mergeGapSec: number;
 }
 
-const isLocalHost = () => /^(localhost|127\.|\[::1\]|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)|\.local$/.test(location.hostname);
-
-export const DEV_PROFILE: UploadProfile = { id: 'local-dev', name: 'Lokaler Test-Server (npm run dev)', kind: 'http-post', url: '/api/upload', token: 'dev-token' };
-
 export function defaultSettings(): Settings {
-  const local = import.meta.env.DEV || isLocalHost();
   return {
-    profiles: local ? [{ ...DEV_PROFILE }] : [],
-    activeProfileId: local ? DEV_PROFILE.id : '',
+    profiles: [{ ...SERVER_PROFILE }],
+    activeProfileId: SERVER_PROFILE.id,
     loudnessPreset: 'mono19',
     exportPreset: 'speech64',
     highpass: true,
@@ -78,6 +77,22 @@ export function defaultSettings(): Settings {
 }
 
 export const settingsStore = createStore<Settings>('audio-tools.predigt-schnitt.settings.v1', defaultSettings);
+
+/** Keys the admin sets for everybody; they live on the server (the upload targets stay per browser). */
+export const SHARED_KEYS = [
+  'loudnessPreset', 'exportPreset', 'highpass', 'compressor', 'fadeIn', 'fadeOut', 'maxGainDb', 'namePattern',
+  'congregation', 'preacher', 'titlePrefix', 'coverDataUrl', 'minSermonMin', 'mergeGapSec',
+] as const satisfies readonly (keyof Settings)[];
+
+export const sharedPart = (s: Settings) => Object.fromEntries(SHARED_KEYS.map(k => [k, s[k]]));
+
+/** Drops targets of removed kinds (the old PHP script) and makes sure the server target exists. */
+export function normalizeSettings(s: Settings): Settings {
+  s.profiles = s.profiles.filter(p => p.kind === 'server' || p.kind === 'opencloud' || p.kind === 'nextcloud');
+  if (!s.profiles.some(p => p.kind === 'server')) s.profiles.unshift({ ...SERVER_PROFILE });
+  if (!s.profiles.some(p => p.id === s.activeProfileId)) s.activeProfileId = SERVER_PROFILE.id;
+  return s;
+}
 
 export const stripTokens = (s: Settings): Settings => ({ ...s, profiles: s.profiles.map(p => ({ ...p, token: '' })) });
 

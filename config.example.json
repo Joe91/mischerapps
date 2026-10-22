@@ -1,0 +1,6 @@
+{
+  "users": {
+    "admin": { "password": "CHANGE-ME" },
+    "mischer": { "password": "CHANGE-ME" }
+  }
+}

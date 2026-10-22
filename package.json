@@ -9,7 +9,9 @@
     "preview": "vite preview --host",
     "test": "vitest run",
     "bench": "tsx scripts/bench.ts",
-    "synth": "python3 scripts/make-synthetic.py"
+    "synth": "python3 scripts/make-synthetic.py",
+    "build:server": "esbuild server/main.ts server/hash-password.ts --bundle --platform=node --format=esm --target=node22 --outdir=dist-server --out-extension:.js=.mjs --banner:js=\"import { createRequire as __createRequire } from 'node:module'; const require = __createRequire(import.meta.url);\"",
+    "hash-password": "tsx server/hash-password.ts"
   },
   "dependencies": {
     "browser-id3-writer": "^6.4.0",

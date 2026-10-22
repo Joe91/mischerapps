@@ -1,10 +1,10 @@
 import { h, progressBar, download, toast } from '../../../../packages/ui-kit/dom';
+import { isAdmin } from '../../../../packages/auth/auth';
 import { uploadFile } from '../../../../packages/upload/http-upload';
 import { uploadToCloud } from '../../../../packages/upload/cloud-upload';
-import { UPLOAD_KINDS, profileKind } from '../settings';
+import { UPLOAD_KINDS, profileKind, SERVER_PROFILE } from '../settings';
 import type { Ctx, Step } from '../context';
 import { isValidFileName, sanitizeFileName } from '../naming';
-import { openSettings } from '../settings-dialog';
 
 export function createUploadStep(ctx: Ctx): Step {
   const profileSel = h('select');
@@ -16,11 +16,14 @@ export function createUploadStep(ctx: Ctx): Step {
   profileSel.addEventListener('change', () => { ctx.settings.activeProfileId = profileSel.value; ctx.saveSettings(); showTarget(); });
   nameInput.addEventListener('change', () => { ctx.state.fileName = sanitizeFileName(nameInput.value); nameInput.value = ctx.state.fileName; });
 
-  const profile = () => ctx.settings.profiles.find(p => p.id === profileSel.value);
+  // the mischer user always uploads to the server; the admin may pick another target
+  const profile = () => isAdmin()
+    ? ctx.settings.profiles.find(p => p.id === profileSel.value)
+    : ctx.settings.profiles.find(p => profileKind(p) === 'server') ?? SERVER_PROFILE;
 
   function showTarget() {
     const p = profile();
-    target.textContent = p ? `Ziel: ${UPLOAD_KINDS[profileKind(p)].label} – ${p.url}` : '';
+    target.textContent = p && isAdmin() ? `Ziel: ${UPLOAD_KINDS[profileKind(p)].label}${profileKind(p) === 'server' ? '' : ` – ${p.url}`}` : '';
     uploadBtn.disabled = !p;
   }
 
@@ -29,8 +32,7 @@ export function createUploadStep(ctx: Ctx): Step {
     profileSel.replaceChildren(...ps.map(p => h('option', { value: p.id }, p.name || p.url)));
     if (ps.some(p => p.id === ctx.settings.activeProfileId)) profileSel.value = ctx.settings.activeProfileId;
     showTarget();
-    noProfile.classList.toggle('hidden', ps.length > 0);
-    profileRow.classList.toggle('hidden', ps.length === 0);
+    profileSel.parentElement?.classList.toggle('hidden', !isAdmin());
   }
 
   async function upload() {
@@ -41,18 +43,14 @@ export function createUploadStep(ctx: Ctx): Step {
     ctx.state.fileName = name;
     if (!isValidFileName(name)) { toast('Ungültiger Dateiname.', 'error'); return; }
     const kind = profileKind(p);
-    if (kind === 'http-post' && !p.token) {
-      status.replaceChildren(h('div', { class: 'notice error' }, 'Für dieses Ziel ist kein Token hinterlegt (Einstellungen).'));
-      return;
-    }
     const bar = progressBar('Lade hoch …');
     const cancel = h('button', { class: 'btn btn-sm', type: 'button', onclick: () => abort?.() }, 'Abbrechen');
     status.replaceChildren(h('div', { class: 'row' }, bar.el, cancel));
     uploadBtn.disabled = true;
     try {
       const progress = (x: number) => bar.set(x, 'Lade hoch …');
-      const up = kind === 'http-post'
-        ? uploadFile(p.url, p.token, r.blob, name, progress)
+      const up = kind === 'server'
+        ? uploadFile(p.url, r.blob, name, progress)
         : uploadToCloud(kind, p.url, p.token, r.blob, name, progress);
       abort = up.abort;
       await up.promise;
@@ -71,13 +69,9 @@ export function createUploadStep(ctx: Ctx): Step {
     h('label', null, 'Upload-Ziel', profileSel),
     h('label', null, 'Dateiname', nameInput),
   );
-  const noProfile = h('div', { class: 'notice warn hidden' },
-    'Kein Upload-Ziel eingerichtet – bitte die Datei herunterladen und auf dem üblichen Weg hochladen. ',
-    h('button', { class: 'btn btn-sm btn-ghost', type: 'button', onclick: () => openSettings(ctx, () => fillProfiles()) }, 'Upload-Ziel einrichten'));
-
   const el = h('section', { class: 'card' },
     h('div', { class: 'card-head' }, h('h2', null, '5 · Upload')),
-    noProfile, profileRow, target,
+    profileRow, target,
     h('div', { class: 'actions' },
       h('button', { class: 'btn', type: 'button', onclick: () => ctx.goto(3) }, '← Export'),
       h('button', { class: 'btn', type: 'button', onclick: () => ctx.state.rendered && download(ctx.state.rendered.blob, sanitizeFileName(nameInput.value)) }, '⬇ Herunterladen'),

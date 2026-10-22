@@ -1,11 +1,11 @@
 import { h, download, toast } from '../../../packages/ui-kit/dom';
 import type { Ctx } from './context';
 import {
-  EXPORT_PRESETS, LOUDNESS_PRESETS, UPLOAD_KINDS, newId, profileKind, settingsStore, stripTokens,
+  CLOUD_KINDS, EXPORT_PRESETS, LOUDNESS_PRESETS, UPLOAD_KINDS, newId, normalizeSettings, profileKind, settingsStore, stripTokens,
   type ExportPresetId, type LoudnessPresetId, type Settings, type UploadKind, type UploadProfile,
 } from './settings';
 
-/** Settings dialog. Edits a copy; "Speichern" writes it to localStorage. */
+/** Settings dialog (admin only). Edits a copy; "Speichern" stores it here and, for the shared part, on the server. */
 export function openSettings(ctx: Ctx, onSaved?: () => void) {
   const draft: Settings = structuredClone(ctx.settings);
   const dlg = h('dialog', { class: 'settings' });
@@ -36,16 +36,25 @@ export function openSettings(ctx: Ctx, onSaved?: () => void) {
   const profileList = h('div', { class: 'profiles' });
   function renderProfiles() {
     profileList.replaceChildren(...draft.profiles.map(p => profileRow(p)),
-      draft.profiles.length ? '' : h('p', { class: 'muted' }, 'Noch kein Ziel. Ohne Ziel kann die Datei heruntergeladen und von Hand hochgeladen werden.'));
+      draft.profiles.length ? '' : h('p', { class: 'muted' }, 'Kein Ziel.'));
   }
   function profileRow(p: UploadProfile) {
+    if (profileKind(p) === 'server') {
+      const serverRadio = h('input', { type: 'radio', name: 'active-profile', checked: draft.activeProfileId === p.id, title: 'Standard-Ziel' });
+      serverRadio.addEventListener('change', () => { draft.activeProfileId = p.id; });
+      return h('div', { class: 'profile' },
+        h('strong', null, UPLOAD_KINDS.server.label),
+        h('p', { class: 'muted small' }, 'Die fertige MP3 wird auf dem NAS gespeichert (Ordner „predigten“ im Datenverzeichnis der App).'),
+        h('div', { class: 'profile-actions' }, h('label', { class: 'check', title: 'Als Standard verwenden' }, serverRadio, 'Standard-Ziel')),
+      );
+    }
     const token = h('input', { type: 'password', value: p.token, autocomplete: 'off', spellcheck: 'false' });
     token.addEventListener('input', () => { p.token = token.value; });
     const show = h('button', { class: 'btn btn-sm btn-ghost', type: 'button', onclick: () => { token.type = token.type === 'password' ? 'text' : 'password'; } }, '👁');
     const radio = h('input', { type: 'radio', name: 'active-profile', checked: draft.activeProfileId === p.id, title: 'Standard-Ziel' });
     radio.addEventListener('change', () => { draft.activeProfileId = p.id; });
     const k = UPLOAD_KINDS[profileKind(p)];
-    const kind = select('Art', UPLOAD_KINDS, () => profileKind(p), v => { p.kind = v as UploadKind; renderProfiles(); });
+    const kind = select('Art', CLOUD_KINDS, () => profileKind(p), v => { p.kind = v as UploadKind; renderProfiles(); });
     return h('div', { class: 'profile' },
       kind,
       text('Name', () => p.name, v => { p.name = v; }, { placeholder: 'z. B. Predigten-Ordner' }),
@@ -86,7 +95,7 @@ export function openSettings(ctx: Ctx, onSaved?: () => void) {
     const f = importInput.files?.[0];
     if (!f) return;
     try {
-      const imported = settingsStore.importJson(await f.text());
+      const imported = normalizeSettings(settingsStore.importJson(await f.text()));
       // keep existing tokens where the import has none
       for (const p of imported.profiles) {
         if (!p.token) p.token = draft.profiles.find(x => x.id === p.id || x.url === p.url)?.token ?? '';
@@ -103,8 +112,10 @@ export function openSettings(ctx: Ctx, onSaved?: () => void) {
 
   const body = h('div', { class: 'dlg-body' },
     h('fieldset', null, h('legend', null, 'Upload-Ziele'),
-      h('p', { class: 'muted small' }, 'Cloud-Ordner: In OpenCloud bzw. Nextcloud den Ordner per öffentlichem Link mit Upload-Recht teilen ' +
-        '(„Hochladen“, „Bearbeiten“ oder „Nur hochladen“) und Link + Passwort hier eintragen. Wird nur in diesem Browser gespeichert.'),
+      h('p', { class: 'muted small' }, 'Normalerweise geht der Upload auf dieses NAS. Zusätzlich lässt sich ein Cloud-Ordner eintragen: ' +
+        'In OpenCloud bzw. Nextcloud den Ordner per öffentlichem Link mit Upload-Recht teilen und Link + Passwort hier eintragen ' +
+        '(die Cloud muss Zugriffe von dieser Adresse erlauben, siehe README). Zusätzliche Ziele gelten nur in diesem Browser. ' +
+        'Die übrigen Einstellungen auf dieser Seite gelten für alle.'),
       profileList,
       h('button', {
         class: 'btn btn-sm', type: 'button', onclick: () => {

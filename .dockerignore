@@ -1,0 +1,12 @@
+.git
+.github
+node_modules
+dist
+dist-server
+uploads-dev
+testdata
+config
+data
+config.json
+*.zip
+*.log

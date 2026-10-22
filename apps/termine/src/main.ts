@@ -1,10 +1,10 @@
 import '../../../packages/ui-kit/ui.css';
 import './app.css';
-import { ensureLogin, logout } from '../../../packages/auth/auth';
-import { h, $, toast } from '../../../packages/ui-kit/dom';
-import { DEFAULT_FILE, isValidFileName, settingsStore, type Settings } from './settings';
-import type { CloudKind } from '../../../packages/upload/cloud-upload';
-import { fetchData, sendOp, type Loaded } from './api';
+import { ensureLogin, isAdmin, logout } from '../../../packages/auth/auth';
+import { loadShared, saveShared } from '../../../packages/settings/shared';
+import { h, $, download, toast } from '../../../packages/ui-kit/dom';
+import { settingsStore, type Settings } from './settings';
+import { exportXlsx, fetchData, importXlsx, sendOp, type Loaded } from './api';
 import {
   ANSWERS, LIMITS, applyOp, emptyEntry, isValidDate, isoDate, normalizeSign, sundays,
   type Answer, type DateEntry, type TermineData,
@@ -20,6 +20,8 @@ await ensureLogin('Termine');
 const main = $('#main');
 const stand = $('#stand');
 const settings: Settings = settingsStore.load();
+const sharedWeeks = (await loadShared('termine')).weeks;
+if (typeof sharedWeeks === 'number' && sharedWeeks >= 1) settings.weeks = sharedWeeks;
 let data: TermineData = { dates: {} };
 let loaded = false;
 let loadError = '';
@@ -32,14 +34,13 @@ const startEdit = (date: string | null) => { editing = date; openForm = null; re
 const parseIso = (iso: string) => { const [y, m, d] = iso.split('-').map(Number); return new Date(y, m - 1, d); };
 const today = () => isoDate(new Date());
 const fmtLong = (iso: string) => parseIso(iso).toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-const configured = () => !!(settings.shareUrl && settings.file);
 
 /** Applies a server answer; warns once per count if rows of the spreadsheet had to be ignored. */
 let warnedSkipped = 0;
 function take(res: Loaded) {
   data = res.data;
   if (res.skipped && res.skipped !== warnedSkipped) {
-    toast(`${res.skipped} Zeile(n) in ${settings.file} haben kein gültiges Datum und werden ignoriert – beim nächsten Speichern gehen sie verloren.`, 'error', 10_000);
+    toast(`${res.skipped} Zeile(n) in termine.xlsx haben kein gültiges Datum und werden ignoriert – beim nächsten Speichern gehen sie verloren.`, 'error', 10_000);
   }
   warnedSkipped = res.skipped;
 }
@@ -67,9 +68,8 @@ function visibleDates(): string[] {
 // ---- server ----
 
 async function load(quiet = false) {
-  if (!configured()) { render(); return; }
   try {
-    take(await fetchData(settings));
+    take(await fetchData());
     loaded = true;
     loadError = '';
     stand.textContent = new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
@@ -86,7 +86,7 @@ async function vote(date: string, answer: Answer | null) {
   applyOp(data, op); // optimistic
   render();
   try {
-    take(await sendOp(settings, op));
+    take(await sendOp(op));
   } catch (e) {
     toast((e as Error).message, 'error');
     await load(true);
@@ -97,7 +97,7 @@ async function vote(date: string, answer: Answer | null) {
 
 async function saveEntry(date: string, fields: Pick<DateEntry, 'title' | 'time' | 'assigned' | 'note'>) {
   try {
-    take(await sendOp(settings, { action: 'update', date, ...fields }));
+    take(await sendOp({ action: 'update', date, ...fields }));
     toast('Gespeichert.', 'ok', 2000);
     startEdit(null);
   } catch (e) {
@@ -134,11 +134,11 @@ function signBar() {
     h('label', { class: 'sign-label' }, 'Mein Kürzel', input),
     h('span', { class: 'spacer' }),
     h('button', { class: 'btn btn-sm', type: 'button', onclick: () => { pastWeeks += PAST_STEP; render(); } }, '↑ Ältere anzeigen'),
-    h('button', {
+    isAdmin() ? h('button', {
       class: 'btn btn-sm', type: 'button', title: 'Termin an einem anderen Tag (z. B. Feiertag) anlegen',
       onclick: () => { extra.classList.remove('hidden'); extra.showPicker?.(); extra.focus(); },
-    }, '+ Weiterer Termin'),
-    extra,
+    }, '+ Weiterer Termin') : '',
+    isAdmin() ? extra : '',
   );
 }
 
@@ -233,7 +233,7 @@ function dateCard(date: string, isNext: boolean) {
         e.title ? h('div', { class: 'date-title' }, e.title) : '',
         assignedInfo(e, assigned),
       ),
-      isEditing ? '' : h('button', {
+      isEditing || !isAdmin() ? '' : h('button', {
         class: 'btn btn-ghost btn-sm edit-btn', type: 'button', title: 'Anlass, Uhrzeit, Einteilung und Hinweise bearbeiten',
         onclick: () => startEdit(date),
       }, '✎ Bearbeiten'),
@@ -250,12 +250,6 @@ function dateCard(date: string, isNext: boolean) {
 
 function render() {
   const head = signBar();
-  if (!configured()) {
-    main.replaceChildren(head, h('div', { class: 'notice warn' },
-      'Kein Cloud-Ordner eingerichtet. Bitte unter ', h('button', { class: 'btn btn-sm', type: 'button', onclick: openSettings }, '⚙ Einstellungen'),
-      ' den Freigabe-Link und das Passwort eintragen.'));
-    return;
-  }
   if (!loaded) {
     main.replaceChildren(head, loadError
       ? h('div', { class: 'notice error' }, loadError, ' ', h('button', { class: 'btn btn-sm', type: 'button', onclick: () => load() }, 'Erneut versuchen'))
@@ -276,52 +270,61 @@ function render() {
 // ---- settings ----
 
 function openSettings() {
-  const draft = { ...settings };
+  const draft = { weeks: settings.weeks };
   const dlg = h('dialog', { class: 'settings narrow-dialog' });
-  const text = (key: 'shareUrl' | 'password' | 'file', attrs: Record<string, unknown>) => {
-    const el = h('input', { ...attrs, value: draft[key], spellcheck: 'false', autocomplete: 'off' });
-    el.addEventListener('input', () => { draft[key] = el.value.trim(); });
-    return el;
-  };
-  const kind = h('select', null,
-    h('option', { value: 'opencloud' }, 'OpenCloud'), h('option', { value: 'nextcloud' }, 'Nextcloud'));
-  kind.value = draft.kind;
-  kind.addEventListener('change', () => { draft.kind = kind.value as CloudKind; });
-  const shareUrl = text('shareUrl', { type: 'url', placeholder: 'https://cloud.example.org/s/AbC123' });
-  const password = text('password', { type: 'password' });
-  const file = text('file', { placeholder: DEFAULT_FILE });
   const weeks = h('input', { type: 'number', min: 1, max: 52, value: String(draft.weeks) });
   weeks.addEventListener('change', () => { const v = Math.round(Number(weeks.value)); if (v >= 1 && v <= 52) draft.weeks = v; });
+
+  const importInput = h('input', { type: 'file', accept: '.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', class: 'hidden' });
+  importInput.addEventListener('change', async () => {
+    const f = importInput.files?.[0];
+    importInput.value = '';
+    if (!f) return;
+    if (!confirm(`Alle Termine durch den Inhalt von „${f.name}“ ersetzen? Die bisherige Tabelle wird als termine.backup.xlsx auf dem Server aufgehoben.`)) return;
+    try {
+      const r = await importXlsx(f);
+      toast(`${r.dates} Termine übernommen${r.skipped ? `, ${r.skipped} Zeile(n) ohne gültiges Datum ignoriert` : ''}.`, r.skipped ? 'info' : 'ok', 7000);
+      dlg.close();
+      void load();
+    } catch (e) {
+      toast((e as Error).message, 'error');
+    }
+  });
 
   dlg.append(
     h('div', { class: 'dlg-head' }, h('h2', null, 'Einstellungen'), h('span', { class: 'spacer' }),
       h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => dlg.close() }, 'Abbrechen'),
       h('button', {
-        class: 'btn btn-primary', type: 'button', onclick: () => {
-          if (!isValidFileName(draft.file)) { toast('Dateiname: muss auf .xlsx enden und darf keine Sonderzeichen wie / oder : enthalten.', 'error'); return; }
-          Object.assign(settings, draft);
-          settingsStore.save(settings);
-          dlg.close();
-          loaded = false;
-          warnedSkipped = 0;
-          void load();
+        class: 'btn btn-primary', type: 'button', onclick: async () => {
+          try {
+            await saveShared('termine', draft);
+            settings.weeks = draft.weeks;
+            settingsStore.save(settings);
+            dlg.close();
+            render();
+          } catch (e) {
+            toast((e as Error).message, 'error');
+          }
         },
       }, 'Speichern'),
     ),
     h('div', { class: 'dlg-body' },
-      h('fieldset', null, h('legend', null, 'Cloud-Ordner'),
-        h('p', { class: 'muted small' },
-          'Die Termine stehen in einer Excel-Datei (.xlsx) in einem Cloud-Ordner, den du per öffentlichem Link mit Bearbeiten-Recht und Passwort teilst. ' +
-          'Die Datei lässt sich dort oder in Excel direkt ansehen und bearbeiten. Link und Passwort werden nur in diesem Browser gespeichert.'),
-        h('div', { class: 'grid' },
-          h('label', null, 'Art', kind),
-          h('label', null, 'Freigabe-Link', shareUrl),
-          h('label', null, 'Passwort', h('div', { class: 'row nowrap' }, password,
-            h('button', { class: 'btn btn-sm btn-ghost', type: 'button', onclick: () => { password.type = password.type === 'password' ? 'text' : 'password'; } }, '👁'))),
-          h('label', null, 'Dateiname', file)),
-      ),
-      h('fieldset', null, h('legend', null, 'Anzeige'),
+      h('fieldset', null, h('legend', null, 'Anzeige (für alle)'),
         h('label', null, 'Anzahl kommender Sonntage', weeks),
+      ),
+      h('fieldset', null, h('legend', null, 'Tabelle (Excel)'),
+        h('p', { class: 'muted small' },
+          'Alle Termine und Antworten stehen in einer Excel-Datei auf dem Server (termine.xlsx), eine Zeile pro Termin und eine Spalte pro Kürzel. ' +
+          'Herunterladen, in Excel bearbeiten und wieder hochladen – das Hochladen ersetzt alle Termine.'),
+        h('div', { class: 'row' },
+          h('button', {
+            class: 'btn btn-sm', type: 'button', onclick: async () => {
+              try { download(await exportXlsx(), 'termine.xlsx'); } catch (e) { toast((e as Error).message, 'error'); }
+            },
+          }, '⬇ Herunterladen'),
+          h('button', { class: 'btn btn-sm', type: 'button', onclick: () => importInput.click() }, '⬆ Hochladen …'),
+          importInput,
+        ),
       ),
     ),
   );

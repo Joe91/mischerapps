@@ -1,9 +1,10 @@
 import '../../../packages/ui-kit/ui.css';
 import './app.css';
-import { ensureLogin, logout } from '../../../packages/auth/auth';
+import { ensureLogin, isAdmin, logout } from '../../../packages/auth/auth';
+import { loadShared, saveShared } from '../../../packages/settings/shared';
 import { AudioWorkerClient } from '../../../packages/audio-core/client';
-import { h, $ } from '../../../packages/ui-kit/dom';
-import { settingsStore } from './settings';
+import { h, $, toast } from '../../../packages/ui-kit/dom';
+import { normalizeSettings, settingsStore, sharedPart, type Settings } from './settings';
 import { lastSunday } from './naming';
 import type { AppState, Ctx, Step } from './context';
 import { openSettings } from './settings-dialog';
@@ -15,7 +16,7 @@ import { createUploadStep } from './steps/upload';
 
 const STEP_LABELS = ['Laden', 'Schnitt', 'Lautheit', 'Export', 'Upload'];
 
-function initialState(settings = settingsStore.load()): AppState {
+function initialState(settings: Settings): AppState {
   return {
     file: null, audioUrl: null, analysis: null, start: 0, end: 0,
     meta: { title: settings.titlePrefix, preacher: settings.preacher, date: lastSunday(), scripture: '', album: settings.congregation },
@@ -26,6 +27,10 @@ function initialState(settings = settingsStore.load()): AppState {
 
 await ensureLogin('Predigt-Schnitt');
 
+// what the admin set up for everybody (server) wins over the browser's own copy
+const settings = normalizeSettings(settingsStore.load());
+Object.assign(settings, await loadShared('predigt'));
+
 const nav = $('#steps');
 const main = $('#main');
 let current = 0;
@@ -33,9 +38,12 @@ const steps: Step[] = [];
 
 const ctx: Ctx = {
   worker: new AudioWorkerClient(),
-  settings: settingsStore.load(),
-  saveSettings() { settingsStore.save(ctx.settings); },
-  state: initialState(),
+  settings,
+  saveSettings() {
+    settingsStore.save(ctx.settings);
+    if (isAdmin()) saveShared('predigt', sharedPart(ctx.settings)).catch(e => toast((e as Error).message, 'error'));
+  },
+  state: initialState(settings),
   goto(i) {
     if (!available(i)) return;
     steps[current]?.leave?.();

@@ -6,3 +6,7 @@ testdata/*
 !testdata/markers.example.json
 *.log
 *.zip
+dist-server/
+config.json
+config/
+data/

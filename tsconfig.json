@@ -13,5 +13,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["src", "apps", "packages", "scripts", "tests", "vite.config.ts", "dev-server.ts"]
+  "include": ["src", "apps", "packages", "scripts", "server", "tests", "vite.config.ts", "dev-server.ts"]
 }

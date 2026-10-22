@@ -163,3 +163,6 @@ dialog legend { font-weight: 600; padding: 0 .35rem; }
   .card { padding: .9rem; }
   .steps .label { display: none; }
 }
+
+/* elements only the admin should see (the server enforces this too) */
+body[data-role="mischer"] .admin-only { display: none !important; }

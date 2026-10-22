@@ -1,0 +1,19 @@
+# Mischer-App on the NAS (Synology / Portainer: Stacks → Add stack → Repository, or `docker compose up -d --build`).
+# Before the first start: put config.json (copy of config.example.json with real passwords) into
+# /volume1/docker/mischer/config/ – see README, "Auf dem NAS betreiben".
+services:
+  mischer:
+    build: .
+    image: mischer-app:latest
+    container_name: Mischer
+    restart: on-failure:5
+    user: "1026:100"
+    security_opt:
+      - no-new-privileges:true
+    ports:
+      - 9120:8080
+    environment:
+      TZ: Europe/Berlin
+    volumes:
+      - /volume1/docker/mischer/config:/config:ro
+      - /volume1/docker/mischer/data:/data:rw
