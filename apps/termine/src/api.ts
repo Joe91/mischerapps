@@ -1,5 +1,6 @@
 // Storage of the Termine: the server (server/api.ts) keeps them in a spreadsheet on the NAS.
 import type { Op, TermineData } from './model';
+import type { PlanResponse } from '../../../packages/plan/plan';
 
 export class ApiError extends Error {
   constructor(public status: number, public body: string) {
@@ -61,4 +62,13 @@ export async function importXlsx(file: Blob): Promise<{ dates: number; skipped: 
     if (e instanceof ApiError && e.status === 400) throw new Error('Das ist keine gültige Excel-Datei (.xlsx).');
     throw e;
   }
+}
+
+/**
+ * Date → Mischer from the Einsatzplan the admin imported on the home page (see packages/plan/plan.ts).
+ * Dates without a Mischer ("", "??") are left out.
+ */
+export async function fetchPlanMischer(): Promise<Record<string, string>> {
+  const { entries } = await (await request('/api/plan')).json() as PlanResponse;
+  return Object.fromEntries(entries.filter(e => !/^\?*$/.test(e.mischer.trim())).map(e => [e.date, e.mischer]));
 }

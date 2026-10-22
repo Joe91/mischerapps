@@ -31,12 +31,13 @@
 .cal-day { font-size: 1.35rem; font-weight: 700; padding-top: .2rem; font-variant-numeric: tabular-nums; }
 .cal-mon { font-size: .75rem; color: var(--muted); padding-bottom: .25rem; }
 
-.next-tag, .you-tag, .warn-tag {
+.next-tag, .you-tag, .warn-tag, .plan-tag {
   font-size: .72rem; font-weight: 700; padding: .1rem .5rem; border-radius: 999px; white-space: nowrap;
 }
 .next-tag { background: var(--accent-soft); color: var(--accent); }
 .you-tag { background: var(--accent); color: var(--on-accent); margin-left: .4rem; }
 .warn-tag { margin-left: .4rem; }
+.plan-tag { margin-left: .4rem; background: var(--surface-2); color: var(--muted); font-weight: 600; cursor: help; }
 .warn-tag.ans-no { background: color-mix(in srgb, var(--no) 16%, transparent); color: var(--no); }
 .warn-tag.ans-maybe { background: color-mix(in srgb, var(--maybe) 16%, transparent); color: var(--maybe); }
 

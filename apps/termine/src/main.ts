@@ -3,7 +3,7 @@ import './app.css';
 import { ensureLogin, isAdmin, logout } from '../../../packages/auth/auth';
 import { h, $, download, toast } from '../../../packages/ui-kit/dom';
 import { settingsStore, type Settings } from './settings';
-import { exportXlsx, fetchData, importXlsx, sendOp, templateXlsx, type Loaded } from './api';
+import { exportXlsx, fetchData, fetchPlanMischer, importXlsx, sendOp, templateXlsx, type Loaded } from './api';
 import {
   ANSWERS, LIMITS, applyOp, emptyEntry, isValidDate, isoDate, normalizeSign,
   type Answer, type DateEntry, type TermineData,
@@ -20,6 +20,8 @@ const main = $('#main');
 const stand = $('#stand');
 const settings: Settings = settingsStore.load();
 let data: TermineData = { dates: {} };
+/** date → Mischer from the Einsatzplan: stands in for an empty "Eingeteilt" */
+let planMischer: Record<string, string> = {};
 let loaded = false;
 let loadError = '';
 /** how many past dates are listed (newest first), raised by "Ältere anzeigen" */
@@ -43,8 +45,10 @@ function take(res: Loaded) {
   warnedSkipped = res.skipped;
 }
 
+/** "Eingeteilt" as entered, otherwise the Mischer from the Einsatzplan (so a new plan shows up without editing every date). */
+const assignedText = (date: string, e: DateEntry) => e.assigned || planMischer[date] || '';
 /** Kürzel mentioned in the free-text "assigned" field ("JD, MK" / "JD + Gast"). */
-const assignedSigns = (e: DateEntry) => e.assigned.split(/[\s,;/+&]+/).map(normalizeSign).filter(Boolean);
+const assignedSigns = (text: string) => text.split(/[\s,;/+&]+/).map(normalizeSign).filter(Boolean);
 
 /** Everyone who ever answered – used to show who has not answered yet. */
 function knownSigns(): string[] {
@@ -70,7 +74,10 @@ const pastCount = () => Object.keys(data.dates).filter(d => d < today()).length;
 
 async function load(quiet = false) {
   try {
-    take(await fetchData());
+    // the plan is extra information: if it fails, keep the last one
+    const [res, plan] = await Promise.all([fetchData(), fetchPlanMischer().catch(() => planMischer)]);
+    take(res);
+    planMischer = plan;
     loaded = true;
     loadError = '';
     stand.textContent = new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
@@ -185,12 +192,16 @@ function voteSummary(e: DateEntry, assigned: string[]) {
   );
 }
 
-function assignedInfo(e: DateEntry, assigned: string[]) {
-  if (!e.assigned) return h('div', { class: 'assigned none' }, 'Noch niemand eingeteilt');
+function assignedInfo(date: string, e: DateEntry, assigned: string[]) {
+  const text = assignedText(date, e);
+  if (!text) return h('div', { class: 'assigned none' }, 'Noch niemand eingeteilt');
   const warnings = assigned.filter(s => e.votes[s] === 'no' || e.votes[s] === 'maybe')
     .map(s => h('span', { class: `warn-tag ans-${e.votes[s]}` }, `${s} hat ${e.votes[s] === 'no' ? 'abgesagt' : '„vielleicht“ gesagt'}`));
   return h('div', { class: 'assigned' },
-    h('span', { class: 'muted' }, 'Eingeteilt: '), h('strong', null, e.assigned),
+    h('span', { class: 'muted' }, 'Eingeteilt: '), h('strong', null, text),
+    e.assigned ? '' : h('span', {
+      class: 'plan-tag', title: 'Mischer aus dem Einsatzplan (Startseite). Ein eigener Eintrag unter „Bearbeiten“ hat Vorrang.',
+    }, 'laut Einsatzplan'),
     settings.sign && assigned.includes(settings.sign) ? h('span', { class: 'you-tag' }, 'Du') : '',
     ...warnings,
   );
@@ -224,7 +235,8 @@ function editForm(date: string, e: DateEntry) {
     h('div', { class: 'grid' },
       field('Anlass / Titel', 'title', 'z. B. Gottesdienst mit Abendmahl'),
       field('Uhrzeit', 'time', 'z. B. 10:00'),
-      field('Eingeteilt', 'assigned', 'Kürzel, z. B. JD, MK'),
+      // the plan's Mischer only as placeholder: saved, it would no longer follow a newly imported plan
+      field('Eingeteilt', 'assigned', planMischer[date] ? `leer = laut Einsatzplan: ${planMischer[date]}` : 'Kürzel, z. B. JD, MK'),
     ),
     h('label', null, 'Hinweise', note),
     h('div', { class: 'actions' },
@@ -241,7 +253,7 @@ function dateCard(date: string, isNext: boolean) {
   const e = data.dates[date] ?? emptyEntry();
   const d = parseIso(date);
   const past = date < today();
-  const assigned = assignedSigns(e);
+  const assigned = assignedSigns(assignedText(date, e));
   const mine = settings.sign ? e.votes[settings.sign] : undefined;
   const isEditing = editing === date;
 
@@ -256,7 +268,7 @@ function dateCard(date: string, isNext: boolean) {
         h('h2', null, fmtLong(date), e.time ? h('span', { class: 'muted' }, ` · ${e.time}`) : '',
           isNext ? h('span', { class: 'next-tag' }, 'Nächster Termin') : ''),
         e.title ? h('div', { class: 'date-title' }, e.title) : '',
-        assignedInfo(e, assigned),
+        assignedInfo(date, e, assigned),
       ),
       isEditing || !isAdmin() ? '' : h('button', {
         class: 'btn btn-ghost btn-sm edit-btn', type: 'button', title: 'Anlass, Uhrzeit, Einteilung und Hinweise bearbeiten',
