@@ -169,7 +169,8 @@ Die API (alle unter `/api`, Anmeldung per Cookie): `POST login` / `logout`, `GET
 3. **Export** – Titel, Prediger, Datum, Bibelstelle und Dateiname eintragen (Schema `predigt-eag-{jjmmdd}`,
    z. B. `predigt-eag-260712.mp3`). Lautheit und Klang werden automatisch nach den Voreinstellungen des Admins
    angepasst (Standard: −19 LUFS, Hochpass 80 Hz, sanfte Kompression 2:1, „Sprache hoch“ = Mono 96 kbps);
-   die Messung läuft schon im Hintergrund, während die Angaben ausgefüllt werden. **⚙ Erweitert** zeigt
+   Messung und MP3-Kodierung laufen schon im Hintergrund, während die Angaben ausgefüllt werden – „MP3 exportieren“
+   schreibt dann nur noch die Tags (Titel, Prediger …) hinein und ist sofort fertig. **⚙ Erweitert** zeigt
    Messwerte und erlaubt, Zielwert, Format, Ein-/Ausblenden, Hochpass und Kompression für diese eine Aufnahme
    zu ändern (die Voreinstellungen bleiben unverändert; Schließen stellt sie wieder her).
    Technik: Messung nach EBU R128 (BS.1770), Look-ahead-Limiter; ein einziger Dekodier-Durchlauf

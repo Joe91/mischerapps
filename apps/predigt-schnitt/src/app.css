@@ -46,9 +46,25 @@
 .file-name { margin-top: .8rem; max-width: 30rem; }
 .options { margin-top: .8rem; }
 .btn-ghost.active { background: var(--surface-2); }
-.advanced { margin-top: .6rem; padding: .8rem 1rem; border-radius: 10px; background: var(--surface-2); }
-.advanced .grid { margin-top: .4rem; }
-.lufs-flow:first-child { margin-top: .8rem; }
+.ready { margin: .75rem 0 0; color: var(--ok); }
+.advanced { margin-top: .6rem; padding: 1rem 1.1rem; border-radius: 10px; background: var(--surface-2); }
+.advanced-head { display: flex; align-items: baseline; gap: .4rem 1rem; flex-wrap: wrap; margin-bottom: .9rem; }
+.advanced-head h3 { margin: 0; font-size: 1rem; }
+.adv-groups { display: grid; gap: 1.1rem 1.75rem; grid-template-columns: minmax(0, 1.7fr) minmax(0, .9fr) minmax(0, 1.4fr); }
+.adv-group { display: flex; flex-direction: column; gap: .65rem; min-width: 0; }
+.adv-group h4 { margin: 0 0 .1rem; padding-bottom: .35rem; border-bottom: 1px solid var(--border); font-size: .75rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.adv-group select { width: 100%; }
+.adv-group label.inline { flex-direction: row; align-items: center; justify-content: space-between; gap: .75rem; color: var(--text); }
+.unit { display: inline-flex; align-items: center; gap: .35rem; color: var(--muted); }
+.unit input { width: 5rem; text-align: right; }
+.check-hint { display: grid; grid-template-columns: auto 1fr; gap: .1rem .55rem; align-items: center; color: var(--text); cursor: pointer; }
+.check-hint small { grid-column: 2; color: var(--muted); font-size: .8rem; line-height: 1.3; }
+.measure-details:not(:empty) { margin-top: 1rem; padding-top: .2rem; border-top: 1px solid var(--border); }
+.measure-details .lufs-flow { margin-top: .8rem; }
+.measure-details p { margin: 0; }
+@media (max-width: 760px) {
+  .adv-groups { grid-template-columns: 1fr; }
+}
 
 .lufs-flow { display: flex; align-items: center; gap: .75rem; flex-wrap: wrap; margin: 1rem 0 .5rem; }
 .lufs-box { display: flex; flex-direction: column; padding: .55rem .9rem; border-radius: 10px; background: var(--surface-2); min-width: 8rem; }

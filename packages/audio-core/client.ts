@@ -1,6 +1,6 @@
 // Main-thread wrapper around audio.worker.ts with promise-based calls and progress callbacks.
 import type { WorkerRequest, WorkerResponse } from './audio.worker';
-import type { AnalyzeOutput, EncodeOptions, Measurement, ProcessOptions, RenderResult, Tags } from './pipeline';
+import type { AnalyzeOutput, EncodeOptions, Measurement, ProcessOptions, RenderResult } from './pipeline';
 import type { AnalysisParams } from './analysis';
 
 type Pending = { resolve: (v: unknown) => void; reject: (e: Error) => void; onProgress?: (p: number) => void };
@@ -44,8 +44,9 @@ export class AudioWorkerClient {
   measure(opts: ProcessOptions, encode: EncodeOptions, onProgress?: (p: number) => void) {
     return this.call<Measurement>({ type: 'measure', opts, encode }, onProgress);
   }
-  render(opts: ProcessOptions, measurement: Measurement, encode: EncodeOptions, tags: Tags, onProgress?: (p: number) => void) {
-    return this.call<RenderResult>({ type: 'render', opts, measurement, encode, tags }, onProgress);
+  /** Encodes without tags (see tags.ts), so the file can be prepared before the details are known. */
+  render(opts: ProcessOptions, measurement: Measurement, encode: EncodeOptions, onProgress?: (p: number) => void) {
+    return this.call<RenderResult>({ type: 'render', opts, measurement, encode }, onProgress);
   }
 
   /** Aborts all running work by restarting the worker. */

@@ -1,6 +1,5 @@
 // Environment-independent processing passes, shared by the Web Worker and the Node scripts.
 import { createMp3Encoder } from 'wasm-media-encoders';
-import { ID3Writer } from 'browser-id3-writer';
 import { Mp3Indexer, type Mp3Info } from './mp3-index';
 import { createDecoder, decodeRange, downmix, CHUNK_BYTES, type ByteSource } from './decode';
 import { FeatureExtractor, PeakBuilder, type Features } from './features';
@@ -337,24 +336,4 @@ export async function render(src: ByteSource, info: Mp3Info, o: ProcessOptions, 
     outputLufs: decoded.lufs, truePeakDb: decoded.truePeakDb,
     limiterReductionDb: -linToDb(lim.minGain),
   };
-}
-
-export interface Tags {
-  title?: string;
-  artist?: string;
-  album?: string;
-  year?: number;
-  comment?: string;
-  cover?: { data: ArrayBuffer; mime: string };
-}
-
-export function tagMp3(mp3: Uint8Array, t: Tags): Uint8Array {
-  const w = new ID3Writer(mp3.buffer.slice(mp3.byteOffset, mp3.byteOffset + mp3.byteLength));
-  if (t.title) w.setFrame('TIT2', t.title);
-  if (t.artist) w.setFrame('TPE1', [t.artist]);
-  if (t.album) w.setFrame('TALB', t.album);
-  if (t.year) w.setFrame('TYER', t.year);
-  if (t.comment) w.setFrame('COMM', { description: '', text: t.comment, language: 'deu' });
-  if (t.cover) w.setFrame('APIC', { type: 3, data: t.cover.data, description: 'Cover' });
-  return new Uint8Array(w.addTag());
 }

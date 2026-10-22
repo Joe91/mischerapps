@@ -11,6 +11,13 @@ export interface Rendered {
   key: string;
 }
 
+/** The MP3 encoded in advance for the current options, still without tags (added on export). */
+export interface Prepared {
+  key: string;
+  mp3: Uint8Array;
+  stats: Omit<RenderResult, 'mp3'>;
+}
+
 export interface AppState {
   file: File | null;
   audioUrl: string | null;
@@ -26,6 +33,7 @@ export interface AppState {
   overrides: Partial<Choices>;
   measurement: Measurement | null;
   measurementKey: string;
+  prepared: Prepared | null;
   rendered: Rendered | null;
   uploadedAs: string | null;
 }
@@ -71,5 +79,5 @@ export function encodeOptions(ctx: Ctx): EncodeOptions {
   return { kbps: EXPORT_PRESETS[choices(ctx).exportPreset].kbps };
 }
 
-/** Key over everything that influences the measurement (the bitrate affects the peak ceiling). */
+/** Key over everything that influences measurement and encoding (the bitrate affects the peak ceiling). */
 export const measurementKey = (o: ProcessOptions, e: EncodeOptions) => JSON.stringify([o, e]);

@@ -1,9 +1,9 @@
-import { h, fmtTime, fmtNum, fmtBytes, progressBar, download } from '../../../../packages/ui-kit/dom';
-import type { Tags } from '../../../../packages/audio-core/pipeline';
-import { choices, processOptions, encodeOptions, measurementKey, STEP, type Ctx, type Step } from '../context';
+import { h, fmtTime, fmtNum, fmtBytes, download } from '../../../../packages/ui-kit/dom';
+import { tagMp3, type Tags } from '../../../../packages/audio-core/tags';
+import { choices, processOptions, STEP, type Ctx, type Step } from '../context';
 import { EXPORT_PRESETS, LOUDNESS_PRESETS } from '../settings';
 import { buildFileName, sanitizeFileName } from '../naming';
-import { createAdvancedPanel, createMeasureView, ensureMeasurement } from './loudness';
+import { createAdvancedPanel, createPrepareView } from './prepare';
 
 async function coverFromDataUrl(dataUrl: string): Promise<Tags['cover']> {
   if (!dataUrl) return undefined;
@@ -37,9 +37,10 @@ export function createExportStep(ctx: Ctx): Step {
   }, '↺');
 
   // Loudness, compression and format come from the admin's defaults and are applied automatically;
-  // the advanced view overrides them for this recording only.
-  const measure = createMeasureView(ctx);
-  const advanced = createAdvancedPanel(ctx, optionsChanged);
+  // the advanced view overrides them for this recording only. The MP3 is prepared in the background
+  // while the details are filled in; exporting then only adds the tags.
+  const prepare = createPrepareView(ctx);
+  const advanced = createAdvancedPanel(ctx, prepare.details, optionsChanged);
   const summary = h('span', { class: 'muted small' });
   const advancedBtn = h('button', { class: 'btn btn-sm btn-ghost', type: 'button', onclick: () => setAdvanced(!st.advanced) }, '⚙ Erweitert');
 
@@ -70,7 +71,7 @@ export function createExportStep(ctx: Ctx): Step {
     showSummary();
     ctx.changed();
     markStale();
-    measure.run();
+    prepare.start();
   }
 
   function updateName() {
@@ -99,40 +100,18 @@ export function createExportStep(ctx: Ctx): Step {
     exportBtn.disabled = true;
     st.fileName = sanitizeFileName(nameInput.value || st.fileName);
     nameInput.value = st.fileName;
-    const bar = progressBar('');
-    status.replaceChildren(bar.el);
+    status.replaceChildren();
     try {
-      const o = processOptions(ctx);
-      const needMeasure = !(st.measurement && st.measurementKey === measurementKey(o, encodeOptions(ctx)));
-      const split = needMeasure ? 0.4 : 0;
-      const m = await ensureMeasurement(ctx, p => bar.set(p * split, 'Lautheit messen …'));
-      const ep = EXPORT_PRESETS[choices(ctx).exportPreset];
-      const key = renderKey();
-      const t = { ...tags(), cover: await coverFromDataUrl(s.coverDataUrl) };
-      let r = await ctx.worker.render(o, m, { kbps: ep.kbps }, t, p => bar.set(split + p * (1 - split), 'Bearbeiten & kodieren …'));
-      // MP3 coding can push peaks over the limit, or miss the loudness slightly: correct once.
-      const delta = o.targetLufs - r.outputLufs;
-      const overshoot = r.truePeakDb - o.truePeakDb;
-      const headroom = o.maxGainDb - m.gainDb;
-      if ((Math.abs(delta) > 0.3 && headroom > 0.1) || overshoot > 0.05) {
-        const d = Math.min(delta, headroom);
-        const m2 = {
-          ...m, gainDb: m.gainDb + d,
-          ...(o.compressor ? { makeupDb: m.makeupDb + d } : { preGainDb: m.preGainDb + d }),
-          ceilingDb: m.ceilingDb - Math.max(0, overshoot + 0.2),
-        };
-        r = await ctx.worker.render(o, m2, { kbps: ep.kbps }, t, p => bar.set(p, 'Feinkorrektur …'));
-      }
-      bar.done();
+      const key = renderKey(), t = tags();
+      const p = await prepare.run();
+      const mp3 = tagMp3(p.mp3, { ...t, cover: await coverFromDataUrl(s.coverDataUrl) });
       if (st.rendered) URL.revokeObjectURL(st.rendered.url);
-      const blob = new Blob([r.mp3 as Uint8Array<ArrayBuffer>], { type: 'audio/mpeg' });
-      const { mp3: _mp3, ...stats } = r;
-      st.rendered = { blob, url: URL.createObjectURL(blob), stats, key };
+      const blob = new Blob([mp3 as Uint8Array<ArrayBuffer>], { type: 'audio/mpeg' });
+      st.rendered = { blob, url: URL.createObjectURL(blob), stats: p.stats, key };
       st.uploadedAs = null;
       showResult();
       ctx.updateNav();
     } catch (e) {
-      bar.done();
       status.replaceChildren(h('div', { class: 'notice error' }, `Export fehlgeschlagen: ${(e as Error).message}`));
     } finally {
       running = false;
@@ -172,7 +151,7 @@ export function createExportStep(ctx: Ctx): Step {
     h('label', { class: 'file-name' }, 'Dateiname', h('div', { class: 'row nowrap' }, nameInput, resetName)),
     h('div', { class: 'row options' }, summary, h('span', { class: 'spacer' }), advancedBtn),
     advanced.el,
-    measure.el,
+    prepare.el,
     h('div', { class: 'actions' },
       h('button', { class: 'btn', type: 'button', onclick: () => ctx.goto(STEP.cut) }, '← Schnitt'),
       exportBtn),
@@ -187,7 +166,7 @@ export function createExportStep(ctx: Ctx): Step {
       scripture.input.value = st.meta.scripture; album.input.value = st.meta.album;
       updateName();
       showAdvanced();
-      measure.run(); // gain and compression are worked out while the details are filled in
+      prepare.start(); // loudness and MP3 are worked out while the details are filled in
       if (!st.rendered) { result.replaceChildren(); status.replaceChildren(); }
       else showResult();
     },
