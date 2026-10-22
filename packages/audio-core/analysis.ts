@@ -34,13 +34,16 @@ export interface AnalysisParams {
   quietDb: number;
   minSermon: number;
   snapRange: number;
+  /** a closing word (the "Amen") up to this long, after a pause up to amenGap, still belongs to the end */
+  amenLen: number;
+  amenGap: number;
   preRoll: number;
   postRoll: number;
 }
 
 export const DEFAULT_PARAMS: AnalysisParams = {
   winSec: 3, stepSec: 0.5, medianSec: 5, hiThr: 0.6, loThr: 0.4,
-  mergeGap: 8, quietGap: 20, edgeGap: 10, edgePart: 180, tailGap: 5, tailPart: 15, quietDb: 15, minSermon: 480, snapRange: 3, preRoll: 0.3, postRoll: 0.8,
+  mergeGap: 8, quietGap: 20, edgeGap: 10, edgePart: 180, tailGap: 5, tailPart: 15, quietDb: 15, minSermon: 480, snapRange: 3, amenLen: 1.5, amenGap: 2.5, preRoll: 0.3, postRoll: 0.8,
 };
 
 /** Per-window features; exported for calibration (scripts/bench.ts --csv). */
@@ -249,9 +252,11 @@ function musicNear(segs: Segment[], t: number, dir: -1 | 1, range = 30): number 
 /**
  * Moves a cut to the edge of the quiet gap next to speech: for a start marker the end of the
  * quietest stretch before the speech onset, for an end marker the beginning of the quiet
- * stretch after the last word. Then adds pre-/post-roll.
+ * stretch after the last word – and after a short closing word that follows a pause (the "Amen"),
+ * when `voiceDb` tells voice from room noise. Then adds pre-/post-roll.
  */
-export function snapMarker(f: Features, t: number, which: 'start' | 'end', p: AnalysisParams, duration: number): number {
+export function snapMarker(f: Features, t: number, which: 'start' | 'end', p: AnalysisParams, duration: number,
+  voiceDb = Infinity): number {
   const hop = f.hopSec, n = f.n;
   const i0 = clamp(Math.floor((t - p.snapRange) / hop), 0, n - 1);
   const i1 = clamp(Math.ceil((t + p.snapRange) / hop), 0, n - 1);
@@ -267,9 +272,35 @@ export function snapMarker(f: Features, t: number, which: 'start' | 'end', p: An
   const quiet = minV + 6;
   let edge = minI;
   if (which === 'start') { while (edge < i1 && sm(edge + 1) < quiet) edge++; }
-  else { while (edge > i0 && sm(edge - 1) < quiet) edge--; }
+  else {
+    while (edge > i0 && sm(edge - 1) < quiet) edge--;
+    edge = closingWord(edge, sm, n, voiceDb, p, hop);
+  }
   const te = edge * hop + hop;
   return clamp(which === 'start' ? te - p.preRoll : te + p.postRoll, 0, duration);
+}
+
+/**
+ * From the quiet frame after the last word, the last frame of short words that follow within
+ * amenGap, each at most amenLen long and followed by ½ s of quiet – at most 4 s further. Longer
+ * sound (music, more talk) or none: the frame before `from`, i.e. where the end already was.
+ */
+function closingWord(from: number, sm: (i: number) => number, n: number, voiceDb: number, p: AnalysisParams, hop: number): number {
+  const gap = Math.round(p.amenGap / hop), maxLen = Math.round(p.amenLen / hop), after = Math.round(0.5 / hop);
+  const limit = from + Math.round(4 / hop);
+  let end = from;
+  for (;;) {
+    let a = end + 1;
+    while (a < n && a - end <= gap && sm(a) <= voiceDb) a++;
+    if (a >= n || a - end > gap || a > limit) break;
+    let b = a;
+    while (b + 1 < n && sm(b + 1) > voiceDb) b++;
+    let q = b + 1;
+    while (q < n && q - b <= after && sm(q) <= voiceDb) q++;
+    if (b - a > maxLen || (q < n && q - b <= after)) break;
+    end = b;
+  }
+  return end;
 }
 
 export function analyze(f: Features, duration: number, params: Partial<AnalysisParams> = {}): AnalysisResult {
@@ -344,7 +375,8 @@ export function analyze(f: Features, duration: number, params: Partial<AnalysisP
   const candidates: Candidate[] = ranked.map(s => ({
     rawStart: s.start, rawEnd: s.end, score: s.score, musicBefore: s.musicBefore, musicAfter: s.musicAfter,
     start: snapMarker(f, s.start, 'start', p, duration),
-    end: snapMarker(f, s.end, 'end', p, duration),
+    // voice: well above the room noise (the "Amen" is quieter than the sermon, rustling quieter still)
+    end: snapMarker(f, s.end, 'end', p, duration, silenceThr + 9),
   }));
 
   let confidence = 0;

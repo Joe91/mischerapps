@@ -62,6 +62,17 @@ describe('snapMarker', () => {
     expect(t).toBeGreaterThan(10.5);
     expect(t).toBeLessThan(11.2);
   });
+  it('keeps a short closing word after a pause (the "Amen"), but not music that follows', () => {
+    // speech until 10 s, 1.3 s pause, then a 0.5 s "Amen" and quiet – or music from 11.3 s on
+    const level = (amen: boolean) => new Float32Array(n).map((_, i) => {
+      const t = i * hop;
+      return t < 10 ? -20 : t >= 11.3 && (!amen || t < 11.8) ? -30 : -70;
+    });
+    const end = (rmsDb: Float32Array) => snapMarker({ ...f, rmsDb }, 9.6, 'end', DEFAULT_PARAMS, 20, -50);
+    expect(end(level(true))).toBeGreaterThan(11.8);
+    expect(end(level(true))).toBeLessThan(12.8);
+    expect(end(level(false))).toBeLessThan(11);
+  });
 });
 
 describe('LoudnessMeter', () => {
@@ -159,7 +170,7 @@ describe('MP3 index and seeking', async () => {
   it('measures and plans gain towards the target', async () => {
     const m = await measure(sourceReader(src, info, 2, 18), {
       start: 2, end: 18, channels: 1, targetLufs: -19, truePeakDb: -1.5, highpass: true,
-      compressor: false, denoise: false, fadeIn: 0.5, fadeOut: 1.5, maxGainDb: 20,
+      compressor: false, denoise: false, denoiseDb: 12, fadeIn: 0.5, fadeOut: 1.5, maxGainDb: 20,
     }, { kbps: 64 });
     expect(Math.abs(m.predictedLufs + 19)).toBeLessThan(0.3);
   });

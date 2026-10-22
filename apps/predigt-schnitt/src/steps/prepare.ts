@@ -56,7 +56,7 @@ let denoiseJob: { window: DenoiseRange; analysis: unknown; promise: Promise<void
 /** Seconds denoised beyond each marker, so that small corrections need no new pass (costs ~2 s each way). */
 const DENOISE_MARGIN = 30;
 const windowFor = (o: DenoiseRange): DenoiseRange =>
-  ({ start: Math.max(0, o.start - DENOISE_MARGIN), end: o.end + DENOISE_MARGIN, channels: o.channels });
+  ({ start: Math.max(0, o.start - DENOISE_MARGIN), end: o.end + DENOISE_MARGIN, channels: o.channels, denoiseDb: o.denoiseDb });
 
 const DENOISE_LABEL = 'Hall und Rauschen werden reduziert …';
 

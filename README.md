@@ -204,7 +204,9 @@ Die API (alle unter `/api`, Anmeldung per Cookie): `POST login` / `logout`, `GET
    fertigen MP3 gemessen.
    **Hall & Rauschen reduzieren** (Standard an): KI-Filter [DeepFilterNet3](https://github.com/Rikorose/DeepFilterNet)
    (MIT/Apache-2.0) als WebAssembly im Browser, nichts zu installieren. Senkt Nachhall und Hintergrundrauschen
-   um höchstens 12 dB, so bleibt es natürlich. Die Aufnahme wird in Abschnitte geteilt, die parallel in
+   um höchstens 18 dB, so bleibt es natürlich (Stärke in den Einstellungen änderbar). Sehr leise Aufnahmen
+   (Mischpult, −50 LUFS) werden dafür vorübergehend auf −23 LUFS angehoben – sonst hält das Modell die Stimme
+   teils für Rauschen. Die Aufnahme wird in Abschnitte geteilt, die parallel in
    mehreren Workern laufen (je 10 s Vorlauf, 1 s Überblendung – vom Durchgang am Stück nicht zu unterscheiden):
    6-Kern-PC ≈ 35× Echtzeit (30 min Predigt ≈ 1 min), ein Kern ≈ 7×. Braucht einmalig ~11 MB Download sowie
    ~250 MB Arbeitsspeicher pro 30 min (Mono; Stereo etwa doppelt) und ~35 MB je Worker.

@@ -1,9 +1,9 @@
 // Sub-worker of audio.worker.ts: denoises one segment of the cut range per job (see planDenoise).
 import { blobSource, type AudioInfo } from './decode';
-import { denoiseSegment, type DenoiseSegment } from './pipeline';
+import { denoiseSegment, type DenoiseConfig, type DenoiseSegment } from './pipeline';
 import type { PcmDump } from './pcm-store';
 
-export interface DenoiseJob { file: File; info: AudioInfo; seg: DenoiseSegment; channels: 1 | 2; module: WebAssembly.Module; }
+export interface DenoiseJob { file: File; info: AudioInfo; seg: DenoiseSegment; cfg: DenoiseConfig; module: WebAssembly.Module; }
 
 export type DenoiseReply =
   | { type: 'progress'; done: number }
@@ -16,9 +16,9 @@ const ctx = self as unknown as {
 };
 
 ctx.onmessage = async (e) => {
-  const { file, info, seg, channels, module } = e.data;
+  const { file, info, seg, cfg, module } = e.data;
   try {
-    const store = await denoiseSegment(blobSource(file), info, seg, channels, module, done => ctx.postMessage({ type: 'progress', done }));
+    const store = await denoiseSegment(blobSource(file), info, seg, cfg, module, done => ctx.postMessage({ type: 'progress', done }));
     const dump = store.dump();
     ctx.postMessage({ type: 'result', dump }, dump.blocks.flatMap(b => [...b.data.map(d => d.buffer), b.scale.buffer]));
   } catch (err) {

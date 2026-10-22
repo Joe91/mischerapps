@@ -1,5 +1,6 @@
 import { createStore } from '../../../packages/settings/store';
 import type { EncodeOptions } from '../../../packages/audio-core/pipeline';
+import { DENOISE_ATTEN_DB } from '../../../packages/denoise/denoise';
 
 export type UploadKind = 'server' | 'opencloud' | 'nextcloud';
 
@@ -44,6 +45,8 @@ export interface Settings {
   highpass: boolean;
   compressor: boolean;
   denoise: boolean;
+  /** how much room sound and noise the denoiser may remove at most (dB) */
+  denoiseDb: number;
   fadeIn: number;
   fadeOut: number;
   maxGainDb: number;
@@ -71,6 +74,7 @@ export function defaultSettings(): Settings {
     highpass: true,
     compressor: true,
     denoise: true, // ≈ 1 min per 30 min on 6 cores, mostly done in the background during the cut step
+    denoiseDb: DENOISE_ATTEN_DB,
     fadeIn: 0.5,
     fadeOut: 0.5, // sermons end with "Amen": just enough to avoid a click
     maxGainDb: 55, // desk recordings can be very quiet (−52 LUFS); the denoiser keeps the lifted noise down
@@ -86,7 +90,7 @@ export function defaultSettings(): Settings {
 }
 
 /** Raised when changed defaults should replace what browsers and the server saved before. */
-export const SETTINGS_REV = 4;
+export const SETTINGS_REV = 5;
 
 /**
  * Saved values (browser, server, imported file) from an older revision: drops those whose default has
@@ -94,6 +98,7 @@ export const SETTINGS_REV = 4;
  * Rev 2: "Sprache hoch" with compression, fade-out 0.5 s, names predigt-eag-JJMMDD.
  * Rev 3: denoising on, max. gain 30 dB (values still at the old defaults only).
  * Rev 4: max. gain 55 dB (desk recordings at −52 LUFS).
+ * Rev 5: denoising strength 18 dB.
  */
 export function upgradeStored(stored: unknown): unknown {
   if (!stored || typeof stored !== 'object') return stored;
@@ -111,6 +116,7 @@ export function upgradeStored(stored: unknown): unknown {
     if (values.maxGainDb === 20) delete values.maxGainDb;
   }
   if (rev < 4 && values.maxGainDb === 30) delete values.maxGainDb;
+  if (rev < 5 && values.denoiseDb === 12) delete values.denoiseDb;
   return { ...values, rev: SETTINGS_REV };
 }
 
@@ -118,7 +124,7 @@ export const settingsStore = createStore<Settings>('audio-tools.predigt-schnitt.
 
 /** Keys the admin sets for everybody; they live on the server (the upload targets stay per browser). */
 export const SHARED_KEYS = [
-  'loudnessPreset', 'exportPreset', 'highpass', 'compressor', 'denoise', 'fadeIn', 'fadeOut', 'maxGainDb', 'namePattern',
+  'loudnessPreset', 'exportPreset', 'highpass', 'compressor', 'denoise', 'denoiseDb', 'fadeIn', 'fadeOut', 'maxGainDb', 'namePattern',
   'congregation', 'preacher', 'titlePrefix', 'coverDataUrl', 'minSermonMin', 'mergeGapSec', 'rev',
 ] as const satisfies readonly (keyof Settings)[];
 
@@ -130,7 +136,7 @@ export function normalizeSettings(s: Settings): Settings {
   const d = defaultSettings();
   if (!(s.loudnessPreset in LOUDNESS_PRESETS)) s.loudnessPreset = d.loudnessPreset;
   if (!(s.exportPreset in EXPORT_PRESETS)) s.exportPreset = d.exportPreset;
-  for (const k of ['fadeIn', 'fadeOut', 'maxGainDb', 'minSermonMin', 'mergeGapSec'] as const) {
+  for (const k of ['fadeIn', 'fadeOut', 'maxGainDb', 'denoiseDb', 'minSermonMin', 'mergeGapSec'] as const) {
     if (typeof s[k] !== 'number' || !isFinite(s[k]) || s[k] < 0) s[k] = d[k];
   }
 

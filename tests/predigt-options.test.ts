@@ -13,6 +13,7 @@ describe('processing defaults', () => {
     expect(s.compressor).toBe(true);
     expect(s.denoise).toBe(true);
     expect(s.maxGainDb).toBe(55);
+    expect(s.denoiseDb).toBe(18);
     const o = processOptions(ctxWith());
     expect(o).toMatchObject({ channels: 1, targetLufs: -19, highpass: true, compressor: true, denoise: true, maxGainDb: 55, start: 10, end: 1800 });
     expect(encodeOptions(ctxWith())).toEqual({ kbps: 96 });
@@ -38,7 +39,7 @@ describe('stored settings', () => {
   const before = { exportPreset: 'speech64', compressor: false, highpass: true, fadeOut: 1.5, namePattern: 'predigt_eag_{datum}', preacher: 'Pfr. X' };
 
   it('let the new defaults replace values saved with the old ones', () => {
-    expect(upgradeStored(before)).toEqual({ highpass: true, preacher: 'Pfr. X', rev: 4 });
+    expect(upgradeStored(before)).toEqual({ highpass: true, preacher: 'Pfr. X', rev: 5 });
     expect(upgradeStored({ ...before, namePattern: '{datum}_{titel}', fadeOut: 2 })).toMatchObject({ namePattern: '{datum}_{titel}', fadeOut: 2 });
     const s = settingsStore.importJson(JSON.stringify({ settings: before }));
     expect(s).toMatchObject({ exportPreset: 'speech96', compressor: true, fadeOut: 0.5, namePattern: 'predigt-eag-{jjmmdd}', preacher: 'Pfr. X' });
@@ -46,19 +47,25 @@ describe('stored settings', () => {
 
   it('keep what the admin chose after the update', () => {
     const shared = sharedPart({ ...defaultSettings(), exportPreset: 'speech64', compressor: false });
-    expect(shared.rev).toBe(4);
+    expect(shared.rev).toBe(5);
     expect(upgradeStored(shared)).toMatchObject({ exportPreset: 'speech64', compressor: false });
   });
 
-  it('switch denoising on and raise the max. gain, unless the admin chose otherwise (rev 2/3 → 4)', () => {
+  it('switch denoising on and raise the max. gain, unless the admin chose otherwise (rev 2/3 → 5)', () => {
     expect(upgradeStored({ rev: 2, denoise: false, maxGainDb: 20, compressor: false, exportPreset: 'speech64' }))
-      .toEqual({ rev: 4, compressor: false, exportPreset: 'speech64' });
-    expect(upgradeStored({ rev: 3, maxGainDb: 30, denoise: false })).toEqual({ rev: 4, denoise: false });
-    expect(upgradeStored({ rev: 2, maxGainDb: 25 })).toEqual({ rev: 4, maxGainDb: 25 });
+      .toEqual({ rev: 5, compressor: false, exportPreset: 'speech64' });
+    expect(upgradeStored({ rev: 3, maxGainDb: 30, denoise: false })).toEqual({ rev: 5, denoise: false });
+    expect(upgradeStored({ rev: 2, maxGainDb: 25 })).toEqual({ rev: 5, maxGainDb: 25 });
     expect(settingsStore.importJson(JSON.stringify({ settings: { rev: 3, maxGainDb: 30 } }))).toMatchObject({ maxGainDb: 55 });
   });
 
+  it('move the filter strength from 12 to 18 dB, unless the admin chose another (rev 4 → 5)', () => {
+    expect(upgradeStored({ rev: 4, denoiseDb: 12, maxGainDb: 55 })).toEqual({ rev: 5, maxGainDb: 55 });
+    expect(upgradeStored({ rev: 4, denoiseDb: 9 })).toEqual({ rev: 5, denoiseDb: 9 });
+    expect(settingsStore.importJson(JSON.stringify({ settings: { rev: 4, denoiseDb: 12 } }))).toMatchObject({ denoiseDb: 18 });
+  });
+
   it('leave an empty server copy empty apart from the revision', () => {
-    expect(upgradeStored({})).toEqual({ rev: 4 });
+    expect(upgradeStored({})).toEqual({ rev: 5 });
   });
 });

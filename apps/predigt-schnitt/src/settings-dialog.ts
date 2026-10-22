@@ -1,3 +1,4 @@
+import { DENOISE_ATTEN_DB } from '../../../packages/denoise/denoise';
 import { h, download, toast } from '../../../packages/ui-kit/dom';
 import type { Ctx } from './context';
 import {
@@ -138,6 +139,7 @@ export function openSettings(ctx: Ctx, onSaved?: () => void) {
         check('Hochpass 80 Hz', () => draft.highpass, v => { draft.highpass = v; }),
         check('Sanfte Kompression 2:1', () => draft.compressor, v => { draft.compressor = v; }),
         check('Hall & Rauschen reduzieren (KI, dauert etwas länger)', () => draft.denoise, v => { draft.denoise = v; }),
+        number(`Stärke Hall & Rauschen (dB, Standard ${DENOISE_ATTEN_DB})`, () => draft.denoiseDb, v => { draft.denoiseDb = v; }, { min: 3, max: 40, step: 1 }),
       ),
     ),
     h('fieldset', null, h('legend', null, 'Dateiname & Tags'),

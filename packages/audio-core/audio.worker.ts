@@ -6,6 +6,7 @@ import {
 } from './pipeline';
 import type { AnalysisParams } from './analysis';
 import { threadCount, workerRunner } from './denoise-pool';
+import { integrateSubBlocks } from './loudness';
 import { loadDenoiser } from '../denoise/denoise';
 
 export type WorkerRequest =
@@ -49,9 +50,13 @@ async function ensureDenoised(range: DenoiseRange, window: DenoiseRange, onProgr
   if (denoised && covers(denoised.window, range)) return denoised;
   denoised = null; // free the old copy before making the new one
   // in parallel sub-workers; browsers without workers in workers run it here on one core
-  const threads = typeof Worker === 'undefined' ? null
-    : { workers: threadCount(), runner: workerRunner(l.file, l.info, window.channels, await loadDenoiser()) };
-  const made = { window, reader: await denoiseRange(l.src, l.info, window, onProgress, threads) };
+  const threads = typeof Worker === 'undefined' ? undefined
+    : { workers: threadCount(), runner: workerRunner(l.file, l.info, await loadDenoiser()) };
+  // the level from the analysis (mono, like the estimate in measure()) spares a pass
+  const levelLufs = hints.loudness
+    ? integrateSubBlocks(hints.loudness, Math.floor(window.start * 10), Math.min(hints.loudness.length, Math.ceil(window.end * 10)))
+    : undefined;
+  const made = { window, reader: await denoiseRange(l.src, l.info, window, { onProgress, threads, levelLufs }) };
   if (src === l.src) denoised = made; // unless another file was loaded meanwhile
   return made;
 }

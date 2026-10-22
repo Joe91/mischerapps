@@ -4,7 +4,7 @@
 //   npm run bench -- some.mp3 other.mp3   just show suggestions for these files
 //   npm run bench -- --csv                additionally write <file>.windows.csv (features + truth label)
 //   npm run bench -- --render             also normalise/encode the sermon and compare LUFS with ffmpeg
-//   npm run bench -- --render --denoise   … with room reverb/noise reduction (DeepFilterNet)
+//   npm run bench -- --render --denoise   … with room reverb/noise reduction (DeepFilterNet; --denoise=18: strength in dB)
 //
 // markers.json: [{ "file": "x.mp3", "start": "22:14.3", "end": "41:57.8" }, …]  (seconds or m:ss / h:mm:ss)
 import { open, readFile, writeFile } from 'node:fs/promises';
@@ -13,7 +13,8 @@ import { spawnSync } from 'node:child_process';
 import { resolve, basename } from 'node:path';
 import type { ByteSource } from '../packages/audio-core/decode';
 import { analyzeSource, denoiseRange, measure, sourceReader, render, type ProcessOptions } from '../packages/audio-core/pipeline';
-import { loadDenoiser } from '../packages/denoise/denoise';
+import { DENOISE_ATTEN_DB, loadDenoiser } from '../packages/denoise/denoise';
+import { integrateSubBlocks } from '../packages/audio-core/loudness';
 import type { WindowFeatures } from '../packages/audio-core/analysis';
 
 const DIR = resolve(import.meta.dirname, '../testdata');
@@ -43,7 +44,9 @@ interface Entry { file: string; start?: string | number; end?: string | number; 
 
 async function main() {
   const args = process.argv.slice(2);
-  const csv = args.includes('--csv'), doRender = args.includes('--render'), denoise = args.includes('--denoise');
+  const csv = args.includes('--csv'), doRender = args.includes('--render');
+  const dnArg = args.find(a => a.startsWith('--denoise'));
+  const denoise = dnArg ? Number(dnArg.split('=')[1] ?? DENOISE_ATTEN_DB) : 0;
   if (denoise) await loadDenoiser(await readFile(resolve(import.meta.dirname, '../packages/denoise/df3.wasm')));
   const files = args.filter(a => !a.startsWith('--'));
   let entries: Entry[];
@@ -106,18 +109,22 @@ async function writeCsv(path: string, w: WindowFeatures, score: Float32Array, tr
   console.log('CSV:', path);
 }
 
+/** Exports like the app with its default settings; `denoise` is the strength in dB (0 = off). */
 async function renderCheck(src: ByteSource, a: Awaited<ReturnType<typeof analyzeSource>>, start: number, end: number, path: string,
-  denoise: boolean) {
-  const info = a.info;
-  const o: ProcessOptions = { start, end, channels: 1, targetLufs: -19, truePeakDb: -1.5, highpass: true, compressor: false, denoise, fadeIn: 0.5, fadeOut: 1.5, maxGainDb: 20 };
+  denoiseDb: number) {
+  const info = a.info, denoise = denoiseDb > 0;
+  const o: ProcessOptions = {
+    start, end, channels: 1, targetLufs: -19, truePeakDb: -1.5, highpass: true, compressor: true, denoise, denoiseDb,
+    fadeIn: 0.5, fadeOut: 0.5, maxGainDb: 55,
+  };
   const t0 = performance.now();
-  const input = denoise ? await denoiseRange(src, info, o) : sourceReader(src, info, start, end);
+  const input = denoise ? await denoiseRange(src, info, o, { levelLufs: integrateSubBlocks(a.loudness, Math.floor(start * 10), Math.ceil(end * 10)) }) : sourceReader(src, info, start, end);
   if (denoise) console.log(`  Hall/Rauschen reduziert: ${((performance.now() - t0) / 1000).toFixed(1)} s für ${fmt(end - start)}`);
   const t1 = performance.now();
-  const m = await measure(input, o, { kbps: 64 }, { loudness: a.loudness });
+  const m = await measure(input, o, { kbps: 96 }, { loudness: a.loudness });
   const tMeasure = (performance.now() - t1) / 1000;
-  const r = await render(input, o, m, { kbps: 64 });
-  const out = path + (denoise ? '.predigt-dn.mp3' : '.predigt.mp3');
+  const r = await render(input, o, m, { kbps: 96 });
+  const out = path + (denoise ? `.predigt-dn${denoiseDb}.mp3` : '.predigt.mp3');
   await writeFile(out, r.mp3);
   const ff = spawnSync('ffmpeg', ['-hide_banner', '-nostats', '-i', out, '-af', 'ebur128=peak=true:framelog=quiet', '-f', 'null', '-'], { encoding: 'utf8', maxBuffer: 64 << 20 }).stderr ?? '';
   const I = /I:\s+(-?[\d.]+) LUFS/.exec(ff.slice(ff.lastIndexOf('Summary')))?.[1];

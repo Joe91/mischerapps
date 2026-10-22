@@ -14,8 +14,8 @@ export function threadCount(): number {
 }
 
 /** Each worker takes the next segment when it is done with one; aborting via `onProgress` throwing stops all. */
-export function workerRunner(file: File, info: AudioInfo, channels: 1 | 2, module: WebAssembly.Module): SegmentRunner {
-  return (segments, onProgress) => new Promise<PcmStore[]>((resolve, reject) => {
+export function workerRunner(file: File, info: AudioInfo, module: WebAssembly.Module): SegmentRunner {
+  return (segments, cfg, onProgress) => new Promise<PcmStore[]>((resolve, reject) => {
     const stores: PcmStore[] = new Array(segments.length);
     const done = segments.map(() => 0);
     const workers: Worker[] = [];
@@ -42,7 +42,7 @@ export function workerRunner(file: File, info: AudioInfo, channels: 1 | 2, modul
           fail(err as Error); // cancelled
         }
       };
-      w.postMessage({ file, info, seg: segments[i], channels, module } satisfies DenoiseJob);
+      w.postMessage({ file, info, seg: segments[i], cfg, module } satisfies DenoiseJob);
     };
 
     for (let k = 0; k < Math.min(threadCount(), segments.length); k++) {

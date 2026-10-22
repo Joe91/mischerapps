@@ -3,17 +3,41 @@ import RegionsPlugin, { type Region } from 'wavesurfer.js/plugins/regions';
 import TimelinePlugin from 'wavesurfer.js/plugins/timeline';
 import { h, fmtTime, parseTime } from '../../../../packages/ui-kit/dom';
 import type { AnalyzeOutput } from '../../../../packages/audio-core/pipeline';
+import { integrateSubBlocks } from '../../../../packages/audio-core/loudness';
 import { STEP, type Ctx, type Step } from '../context';
 import { prefetchDenoising } from './prepare';
 
 type Which = 'start' | 'end';
 const css = (name: string) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 const MAX_PX_PER_SEC = 200;
+/** Seconds played before and after a marker by "Vorhören", and at the end by "Schluss". */
+const PREVIEW_SEC = 4;
+const END_PREVIEW_SEC = 8;
+/** Playback is raised towards this loudness: desk recordings can be at −50 LUFS. */
+const PLAYBACK_LUFS = -20;
+const MAX_PLAYBACK_GAIN_DB = 40;
+
+let audioCtx: AudioContext | null = null;
+
+/**
+ * Plays `audio` raised by `gainDb`; a limiter keeps the much louder organ and singing from clipping.
+ * The context starts suspended until the first click, so it is resumed whenever playback starts.
+ */
+function amplify(audio: HTMLAudioElement, gainDb: number): AudioNode {
+  audioCtx ??= new AudioContext();
+  const ctx = audioCtx;
+  const source = ctx.createMediaElementSource(audio);
+  const limiter = new DynamicsCompressorNode(ctx, { threshold: -6, knee: 0, ratio: 20, attack: 0.002, release: 0.2 });
+  source.connect(new GainNode(ctx, { gain: Math.pow(10, gainDb / 20) })).connect(limiter).connect(ctx.destination);
+  audio.addEventListener('play', () => { void ctx.resume(); });
+  return source;
+}
 
 export function createCutStep(ctx: Ctx): Step {
   let ws: WaveSurfer | null = null;
   let region: Region | null = null;
   let audio: HTMLAudioElement | null = null;
+  let route: AudioNode | null = null;
   let builtFor: AnalyzeOutput | null = null;
   let active: Which = 'start';
   let fitPx = 1;
@@ -22,6 +46,7 @@ export function createCutStep(ctx: Ctx): Step {
   const timelineEl = h('div', { class: 'timeline' });
   const overview = h('canvas', { class: 'overview', title: 'Übersicht – klicken zum Springen' });
   const timeLabel = h('span', { class: 'time mono' }, '0:00.0');
+  const gainEl = h('span', { class: 'muted small', title: 'Nur zum Anhören – der Export wird getrennt angepasst' });
   const playBtn = h('button', { class: 'btn btn-primary play', type: 'button', title: 'Abspielen/Pause (Leertaste)', onclick: () => ws?.playPause() }, '▶');
   const zoom = h('input', { type: 'range', min: 0, max: 1000, value: 0, step: 1, 'aria-label': 'Zoom', class: 'zoom' });
   const confEl = h('span', { class: 'badge' });
@@ -44,7 +69,7 @@ export function createCutStep(ctx: Ctx): Step {
       h('span', { class: 'marker-label' }, label),
       input,
       nudge(-1, '−1 s', `${label} 1 s früher`), nudge(-0.1, '−0,1', `${label} 0,1 s früher`),
-      h('button', { class: 'btn btn-sm', type: 'button', title: '5 s um den Marker anhören (P)', onclick: () => preview(which) }, '▶ Vorhören'),
+      h('button', { class: 'btn btn-sm', type: 'button', title: `${2 * PREVIEW_SEC} s um den Marker anhören (P)`, onclick: () => preview(which) }, '▶ Vorhören'),
       nudge(0.1, '+0,1', `${label} 0,1 s später`), nudge(1, '+1 s', `${label} 1 s später`),
       h('button', {
         class: 'btn btn-sm btn-ghost', type: 'button', title: `${label} auf Abspielposition setzen (${which === 'start' ? 'S' : 'E'})`,
@@ -105,7 +130,7 @@ export function createCutStep(ctx: Ctx): Step {
   function preview(which: Which) {
     setActive(which);
     const t = get(which);
-    ws?.play(Math.max(0, t - 2.5), t + 2.5);
+    ws?.play(Math.max(0, t - PREVIEW_SEC), t + PREVIEW_SEC);
   }
 
   const zoomPx = () => fitPx * Math.pow(MAX_PX_PER_SEC / fitPx, Number(zoom.value) / 1000);
@@ -189,6 +214,13 @@ export function createCutStep(ctx: Ctx): Step {
     audio?.pause();
     audio = new Audio(ctx.state.audioUrl!);
     audio.preload = 'auto';
+    // as loud as the suggested sermon needs (the cut itself does not change it while listening)
+    const c = a.result.candidates[0];
+    const lufs = integrateSubBlocks(a.loudness, c ? Math.floor(c.start * 10) : 0, c ? Math.ceil(c.end * 10) : a.loudness.length);
+    const gainDb = isFinite(lufs) ? Math.round(Math.min(MAX_PLAYBACK_GAIN_DB, Math.max(0, PLAYBACK_LUFS - lufs))) : 0;
+    route?.disconnect(); // the previous recording's
+    route = amplify(audio, gainDb);
+    gainEl.textContent = gainDb > 0 ? `Wiedergabe +${gainDb} dB` : '';
     const regions = RegionsPlugin.create();
     const width = waveEl.clientWidth || 900;
     fitPx = width / a.info.duration;
@@ -289,9 +321,9 @@ export function createCutStep(ctx: Ctx): Step {
     legend,
     waveBox,
     h('div', { class: 'row transport' },
-      playBtn, timeLabel,
+      playBtn, timeLabel, gainEl,
       h('button', { class: 'btn btn-sm', type: 'button', onclick: () => ws?.play(ctx.state.start, ctx.state.end) }, '▶ Auswahl abspielen'),
-      h('button', { class: 'btn btn-sm', type: 'button', title: 'Letzte 5 s der Auswahl', onclick: () => ws?.play(Math.max(ctx.state.start, ctx.state.end - 5), ctx.state.end) }, '▶ Schluss'),
+      h('button', { class: 'btn btn-sm', type: 'button', title: `Letzte ${END_PREVIEW_SEC} s der Auswahl`, onclick: () => ws?.play(Math.max(ctx.state.start, ctx.state.end - END_PREVIEW_SEC), ctx.state.end) }, '▶ Schluss'),
       h('span', { class: 'spacer' }),
       h('span', { class: 'muted small' }, 'Zoom'), zoom,
     ),

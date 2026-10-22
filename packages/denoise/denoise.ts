@@ -15,9 +15,10 @@ interface DfExports {
 
 /**
  * Attenuation limit: noise and reverb are lowered by at most this much, the rest stays.
- * 12 dB sounded natural on the sermon recordings; without a limit the pauses became unnaturally dead.
+ * 18 dB sounded best on the desk recordings (compared with 12 and 24 dB through the whole export chain);
+ * without a limit the pauses become unnaturally dead.
  */
-export const DENOISE_ATTEN_DB = 12;
+export const DENOISE_ATTEN_DB = 18;
 export const DENOISE_RATE = 48000;
 
 let compiled: Promise<WebAssembly.Module> | null = null;

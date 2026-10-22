@@ -4,7 +4,8 @@ import { createMp3Encoder } from 'wasm-media-encoders';
 import { Resampler } from '../packages/audio-core/dsp';
 import { PcmStore, readJoined } from '../packages/audio-core/pcm-store';
 import { Mp3Indexer } from '../packages/audio-core/mp3-index';
-import { covers, denoisedPart, denoiseRange, inProcess, planDenoise, type RangeReader } from '../packages/audio-core/pipeline';
+import { covers, denoisedPart, denoiseRange, inProcess, planDenoise, sourceReader, type RangeReader } from '../packages/audio-core/pipeline';
+import { LoudnessMeter } from '../packages/audio-core/loudness';
 import { Denoiser, loadDenoiser } from '../packages/denoise/denoise';
 
 const wasm = readFileSync(new URL('../packages/denoise/df3.wasm', import.meta.url));
@@ -162,7 +163,7 @@ describe('denoiseRange', () => {
     const { info, src } = await mp3Of(pcm, sr);
 
     const progress: number[] = [];
-    const reader = await denoiseRange(src, info, { start: 1, end: 4.5, channels: 2 }, p => progress.push(p));
+    const reader = await denoiseRange(src, info, { start: 1, end: 4.5, channels: 2, denoiseDb: 12 }, { onProgress: p => progress.push(p) });
     expect(reader.sampleRate).toBe(48000);
     expect(progress.at(-1)).toBe(1);
     let n = 0, chans = 0;
@@ -179,11 +180,11 @@ describe('denoiseRange in segments', () => {
     let seed = 7;
     for (let i = 0; i < x.length; i++) { seed = (seed * 16807) % 2147483647; x[i] += 0.02 * (seed / 2147483647 - 0.5); }
     const { info, src } = await mp3Of(x, sr);
-    const o = { start: 0.5, end: 21.5, channels: 1 as const };
+    const o = { start: 0.5, end: 21.5, channels: 1 as const, denoiseDb: 12 };
     const whole = (await readAll(await denoiseRange(src, info, o)))[0];
     const params = { minSec: 5, warmupSec: 3, fadeSec: 0.5 };
     expect(planDenoise(info, o.start, o.end, 3, params).segments.length).toBe(3);
-    const split = (await readAll(await denoiseRange(src, info, o, undefined, { workers: 3, runner: inProcess(src, info, 1) }, params)))[0];
+    const split = (await readAll(await denoiseRange(src, info, o, { threads: { workers: 3, runner: inProcess(src, info) }, params })))[0];
     expect(split.length).toBe(whole.length);
     const level = rms(whole), diff = whole.map((v, i) => v - split[i]);
     expect(20 * Math.log10(rms(diff) / level)).toBeLessThan(-30);
@@ -203,10 +204,11 @@ describe('denoisedPart', () => {
   it('serves a cut inside a denoised window like a pass over the cut itself', async () => {
     await loadDenoiser(wasm);
     const sr = 44100, { info, src } = await mp3Of(syllables(sr, 16), sr);
-    const window = { start: 0.3, end: 15.7, channels: 1 as const }, cut = { start: 4.37, end: 12.81, channels: 1 as const };
+    const window = { start: 0.3, end: 15.7, channels: 1 as const, denoiseDb: 12 }, cut = { start: 4.37, end: 12.81, channels: 1 as const, denoiseDb: 12 };
     expect(covers(window, cut)).toBe(true);
     expect(covers(window, { ...cut, end: 15.8 })).toBe(false);
     expect(covers(window, { ...cut, channels: 2 })).toBe(false);
+    expect(covers(window, { ...cut, denoiseDb: 18 })).toBe(false);
     const part = (await readAll(denoisedPart(await denoiseRange(src, info, window), info, window, cut)))[0];
     const direct = (await readAll(await denoiseRange(src, info, cut)))[0];
     expect(part.length).toBe(direct.length);
@@ -215,5 +217,29 @@ describe('denoisedPart', () => {
     const tail = (x: Float32Array) => x.subarray(3 * 48000);
     const diff = tail(part).map((v, i) => v - tail(direct)[i]);
     expect(20 * Math.log10(rms(diff) / rms(tail(direct)))).toBeLessThan(-30);
+  }, 30000);
+});
+
+describe('denoiseRange on quiet recordings', () => {
+  it('treats a recording made at −50 LUFS like one at a normal level', async () => {
+    await loadDenoiser(wasm);
+    const sr = 48000, x = syllables(sr, 12);
+    let seed = 3;
+    for (let i = 0; i < x.length; i++) { seed = (seed * 16807) % 2147483647; x[i] = 0.04 * x[i] + 0.002 * (seed / 2147483647 - 0.5); }
+    const o = { start: 0.5, end: 11.5, channels: 1 as const, denoiseDb: 12 };
+    const lufs = async (r: RangeReader) => { const m = new LoudnessMeter(r.sampleRate, 1); await r.read(chs => { m.push(chs); }); return m.integrated(); };
+    /** loudness change by the filter (dB) */
+    const change = async (pcm: Float32Array, levelLufs?: number) => {
+      const { info, src } = await mp3Of(pcm, sr);
+      const before = await lufs(sourceReader(src, info, o.start, o.end));
+      return { before, change: await lufs(await denoiseRange(src, info, o, { levelLufs })) - before };
+    };
+    const normal = await change(x.map(v => v * 20));
+    const quiet = await change(x);
+    const unlifted = await change(x, 0); // without lifting it first
+    expect(quiet.before).toBeLessThan(-45);
+    expect(normal.before).toBeGreaterThan(-25);
+    expect(Math.abs(quiet.change - normal.change)).toBeLessThan(1);
+    expect(unlifted.change).toBeLessThan(normal.change - 3);
   }, 30000);
 });

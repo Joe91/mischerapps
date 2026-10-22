@@ -72,7 +72,7 @@ export function processOptions(ctx: Ctx): ProcessOptions {
   const c = choices(ctx), lp = LOUDNESS_PRESETS[c.loudnessPreset], ep = EXPORT_PRESETS[c.exportPreset];
   return {
     start: ctx.state.start, end: ctx.state.end, channels: ep.channels,
-    targetLufs: lp.lufs, truePeakDb: lp.tp, highpass: c.highpass, compressor: c.compressor, denoise: c.denoise,
+    targetLufs: lp.lufs, truePeakDb: lp.tp, highpass: c.highpass, compressor: c.compressor, denoise: c.denoise, denoiseDb: ctx.settings.denoiseDb,
     fadeIn: c.fadeIn, fadeOut: c.fadeOut, maxGainDb: ctx.settings.maxGainDb,
   };
 }

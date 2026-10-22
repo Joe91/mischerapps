@@ -8,7 +8,7 @@ type Kind = 'string' | 'number' | 'boolean';
 
 export const SHARED_SETTINGS: Record<string, Record<string, Kind>> = {
   predigt: {
-    loudnessPreset: 'string', exportPreset: 'string', highpass: 'boolean', compressor: 'boolean', denoise: 'boolean',
+    loudnessPreset: 'string', exportPreset: 'string', highpass: 'boolean', compressor: 'boolean', denoise: 'boolean', denoiseDb: 'number',
     fadeIn: 'number', fadeOut: 'number', maxGainDb: 'number', namePattern: 'string', congregation: 'string',
     preacher: 'string', titlePrefix: 'string', coverDataUrl: 'string', minSermonMin: 'number', mergeGapSec: 'number',
     rev: 'number',
