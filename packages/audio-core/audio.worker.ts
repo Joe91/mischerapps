@@ -6,6 +6,8 @@ import {
   type EncodeOptions, type MeasureHints, type Measurement, type ProcessOptions, type RangeReader,
 } from './pipeline';
 import type { AnalysisParams } from './analysis';
+import { threadCount, workerRunner } from './denoise-pool';
+import { loadDenoiser } from '../denoise/denoise';
 
 export type WorkerRequest =
   | { id: number; type: 'analyze'; file: File; params: Partial<AnalysisParams> }
@@ -25,6 +27,7 @@ const ctx = self as unknown as {
   onmessage: ((e: MessageEvent<WorkerRequest>) => void) | null;
 };
 
+let file: File | null = null;
 let src: ByteSource | null = null;
 let info: Mp3Info | null = null;
 let hints: MeasureHints = {};
@@ -36,8 +39,8 @@ const cancelled = new Set<number>();
 let denoised: { key: string; reader: RangeReader } | null = null;
 
 function loaded() {
-  if (!src || !info) throw new Error('Keine Datei geladen.');
-  return { src, info };
+  if (!file || !src || !info) throw new Error('Keine Datei geladen.');
+  return { file, src, info };
 }
 
 /** What measure and render read: the MP3 itself, or its denoised copy (made first if needed). */
@@ -47,7 +50,10 @@ async function input(o: ProcessOptions, onProgress: (p: number) => void): Promis
   const key = denoiseKey(o);
   if (denoised?.key === key) return denoised.reader;
   denoised = null; // free the old copy before making the new one
-  const reader = await denoiseRange(l.src, l.info, o, onProgress);
+  // in parallel sub-workers; browsers without workers in workers run it here on one core
+  const threads = typeof Worker === 'undefined' ? null
+    : { workers: threadCount(), runner: workerRunner(l.file, l.info, o.channels, await loadDenoiser()) };
+  const reader = await denoiseRange(l.src, l.info, o, onProgress, threads);
   if (src === l.src) denoised = { key, reader }; // unless another file was loaded meanwhile
   return reader;
 }
@@ -67,6 +73,7 @@ ctx.onmessage = async (e) => {
     switch (req.type) {
       case 'analyze': {
         running.forEach(id => { if (id !== req.id) cancelled.add(id); }); // all of it was for the previous file
+        file = req.file;
         src = blobSource(req.file);
         info = null;
         hints = {};

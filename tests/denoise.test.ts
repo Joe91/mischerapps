@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { createMp3Encoder } from 'wasm-media-encoders';
 import { Resampler } from '../packages/audio-core/dsp';
-import { PcmStore } from '../packages/audio-core/pcm-store';
+import { PcmStore, readJoined } from '../packages/audio-core/pcm-store';
 import { Mp3Indexer } from '../packages/audio-core/mp3-index';
-import { denoiseRange } from '../packages/audio-core/pipeline';
+import { denoiseRange, inProcess, planDenoise, type RangeReader } from '../packages/audio-core/pipeline';
 import { Denoiser, loadDenoiser } from '../packages/denoise/denoise';
 
 const wasm = readFileSync(new URL('../packages/denoise/df3.wasm', import.meta.url));
@@ -101,20 +101,65 @@ describe('Denoiser', async () => {
   });
 });
 
+async function mp3Of(pcm: Float32Array, sr: number) {
+  const enc = await createMp3Encoder();
+  enc.configure({ sampleRate: sr, channels: 1, bitrate: 128 });
+  const parts = [enc.encode([pcm]).slice(), enc.finalize().slice()];
+  const mp3 = new Uint8Array(parts.reduce((a, p) => a + p.length, 0));
+  let o = 0;
+  for (const p of parts) { mp3.set(p, o); o += p.length; }
+  const idx = new Mp3Indexer();
+  idx.push(mp3);
+  const info = idx.finish();
+  const src = { size: mp3.length, read: async (off: number, len: number) => mp3.subarray(off, off + len) };
+  return { info, src };
+}
+
+async function readAll(r: RangeReader) {
+  const parts: Float32Array[][] = [];
+  await r.read(chs => { parts.push(chs.map(c => c.slice())); });
+  return parts[0].map((_, ch) => Float32Array.from(parts.flatMap(p => [...p[ch]])));
+}
+
+describe('planDenoise', () => {
+  const info = { sampleRate: 44100, frames: 100000, spf: 1152, delay: 576 };
+  const total = (start: number, end: number) => Math.ceil(((Math.round(end * 44100) - Math.round(start * 44100)) * 160) / 147);
+
+  it('splits a long range so that the kept parts add up to one pass over it', () => {
+    const { segments, fade } = planDenoise(info, 12.3, 1812.3, 8);
+    expect(segments.length).toBe(8);
+    expect(segments.reduce((a, s) => a + s.keep, 0) - fade * (segments.length - 1)).toBe(total(12.3, 1812.3));
+    const s0 = Math.round(12.3 * 44100);
+    for (const s of segments) {
+      expect((s.from - s0) % 147).toBe(0); // on the resampling grid
+      expect(s.skip).toBeGreaterThanOrEqual(0);
+      expect(s.keep).toBeGreaterThan(60 * 48000);
+    }
+    expect(segments[1].skip).toBe(10 * 48000); // warm-up
+  });
+
+  it('keeps one pass for one thread or a short range', () => {
+    expect(planDenoise(info, 0, 1800, 1).segments).toEqual([{ from: 0, to: 1800 * 44100, skip: 0, keep: total(0, 1800) }]);
+    expect(planDenoise(info, 0, 100, 8).segments.length).toBe(1);
+    expect(planDenoise(info, 0, 3000, 4).segments.length).toBe(8); // two rounds when long
+  });
+});
+
+describe('readJoined', () => {
+  it('crossfades the overlap and keeps the length', async () => {
+    const part = (v: number, n: number) => { const s = new PcmStore(1, 48000); s.push([new Float32Array(n).fill(v)]); s.finish(); return s; };
+    const got: number[] = [];
+    await readJoined([part(0.5, 20000), part(0.5, 30000), part(0.5, 10000)], 1000, chs => { got.push(...chs[0]); });
+    expect(got.length).toBe(58000);
+    expect(Math.max(...got.map(v => Math.abs(v - 0.5)))).toBeLessThan(1e-4);
+  });
+});
+
 describe('denoiseRange', () => {
   it('delivers the cut range at 48 kHz with the matching length', async () => {
     await loadDenoiser(wasm);
     const sr = 44100, pcm = syllables(sr, 6);
-    const enc = await createMp3Encoder();
-    enc.configure({ sampleRate: sr, channels: 1, bitrate: 128 });
-    const parts = [enc.encode([pcm]).slice(), enc.finalize().slice()];
-    const mp3 = new Uint8Array(parts.reduce((a, p) => a + p.length, 0));
-    let o = 0;
-    for (const p of parts) { mp3.set(p, o); o += p.length; }
-    const idx = new Mp3Indexer();
-    idx.push(mp3);
-    const info = idx.finish();
-    const src = { size: mp3.length, read: async (off: number, len: number) => mp3.subarray(off, off + len) };
+    const { info, src } = await mp3Of(pcm, sr);
 
     const progress: number[] = [];
     const reader = await denoiseRange(src, info, { start: 1, end: 4.5, channels: 2 }, p => progress.push(p));
@@ -125,4 +170,31 @@ describe('denoiseRange', () => {
     expect(chans).toBe(2);
     expect(n).toBe(Math.ceil(((Math.round(4.5 * sr) - Math.round(1 * sr)) * 48000) / sr));
   });
+});
+
+describe('denoiseRange in segments', () => {
+  it('gives the same signal as one pass, without audible joins', async () => {
+    await loadDenoiser(wasm);
+    const sr = 44100, x = syllables(sr, 22);
+    let seed = 7;
+    for (let i = 0; i < x.length; i++) { seed = (seed * 16807) % 2147483647; x[i] += 0.02 * (seed / 2147483647 - 0.5); }
+    const { info, src } = await mp3Of(x, sr);
+    const o = { start: 0.5, end: 21.5, channels: 1 as const };
+    const whole = (await readAll(await denoiseRange(src, info, o)))[0];
+    const params = { minSec: 5, warmupSec: 3, fadeSec: 0.5 };
+    expect(planDenoise(info, o.start, o.end, 3, params).segments.length).toBe(3);
+    const split = (await readAll(await denoiseRange(src, info, o, undefined, { workers: 3, runner: inProcess(src, info, 1) }, params)))[0];
+    expect(split.length).toBe(whole.length);
+    const level = rms(whole), diff = whole.map((v, i) => v - split[i]);
+    expect(20 * Math.log10(rms(diff) / level)).toBeLessThan(-30);
+    // no clicks: around each join (crossfade and the 50 ms after it) both versions agree
+    // (a fresh model may still treat a later onset a little differently; with 3 s warm-up instead of 10 s here)
+    const { segments, fade } = planDenoise(info, o.start, o.end, 3, params);
+    const peak = (v: Float32Array) => v.reduce((m, y) => Math.max(m, Math.abs(y)), 0);
+    let join = 0;
+    for (const seg of segments.slice(0, -1)) {
+      join += seg.keep - (join ? fade : 0);
+      expect(peak(diff.subarray(join - fade, join + 2400))).toBeLessThan(0.02 * peak(whole));
+    }
+  }, 30000);
 });

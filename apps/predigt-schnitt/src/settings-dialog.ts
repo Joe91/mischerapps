@@ -137,7 +137,7 @@ export function openSettings(ctx: Ctx, onSaved?: () => void) {
         number('Max. Anhebung (dB)', () => draft.maxGainDb, v => { draft.maxGainDb = v; }, { min: 0, max: 40, step: 1 }),
         check('Hochpass 80 Hz', () => draft.highpass, v => { draft.highpass = v; }),
         check('Sanfte Kompression 2:1', () => draft.compressor, v => { draft.compressor = v; }),
-        check('Hall & Rauschen reduzieren (KI, dauert einige Minuten)', () => draft.denoise, v => { draft.denoise = v; }),
+        check('Hall & Rauschen reduzieren (KI, dauert etwas länger)', () => draft.denoise, v => { draft.denoise = v; }),
       ),
     ),
     h('fieldset', null, h('legend', null, 'Dateiname & Tags'),

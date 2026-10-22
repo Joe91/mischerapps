@@ -70,7 +70,7 @@ export function defaultSettings(): Settings {
     exportPreset: 'speech96',
     highpass: true,
     compressor: true,
-    denoise: false, // takes minutes (≈ 7× real time); for recordings with much reverb
+    denoise: false, // takes a while (30 min: ≈ 1 min on 6 cores, 4–5 min on one); for recordings with much reverb
     fadeIn: 0.5,
     fadeOut: 0.5, // sermons end with "Amen": just enough to avoid a click
     maxGainDb: 20,

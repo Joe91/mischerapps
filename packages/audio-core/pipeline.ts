@@ -6,7 +6,7 @@ import { FeatureExtractor, PeakBuilder, type Features } from './features';
 import { analyze, type AnalysisParams, type AnalysisResult } from './analysis';
 import { LoudnessMeter, TruePeakMeter, integrateSubBlocks } from './loudness';
 import { Biquad, Compressor, Limiter, Resampler, dbToLin, fadeGain, linToDb, rbj } from './dsp';
-import { PcmStore } from './pcm-store';
+import { PcmStore, readJoined } from './pcm-store';
 import { DENOISE_RATE, Denoiser, loadDenoiser } from '../denoise/denoise';
 
 export const PEAKS_PER_SEC = 50;
@@ -122,38 +122,112 @@ export const mp3Reader = (src: ByteSource, info: Mp3Info, start: number, end: nu
 export const denoiseKey = (o: Pick<ProcessOptions, 'start' | 'end' | 'channels'>) => JSON.stringify([o.start, o.end, o.channels]);
 
 /**
- * Pass 1b (optional): room reverb and noise reduction of the cut range, at 48 kHz. Takes minutes
- * (≈ 7× real time on a desktop CPU), so it runs once and is kept in memory for the following passes.
+ * Splitting the denoising into segments for several threads. Each segment starts `warmupSec` early
+ * (the model needs a few seconds to settle; that output is dropped) and overlaps the previous one
+ * by `fadeSec`, where the two are crossfaded: after 10 s a fresh model differs from one that ran
+ * from the start by −45 dB or less. `tailSec` keeps the end effects out of the kept part.
  */
-export async function denoiseRange(src: ByteSource, info: Mp3Info, o: Pick<ProcessOptions, 'start' | 'end' | 'channels'>,
-  onProgress?: (p: number) => void): Promise<RangeReader> {
-  const module = await loadDenoiser();
-  const nch = o.channels;
-  const dfs = await Promise.all(Array.from({ length: nch }, () => Denoiser.create(module)));
-  const rs = info.sampleRate === DENOISE_RATE ? null : new Resampler(info.sampleRate, DENOISE_RATE, nch);
-  const store = new PcmStore(nch, DENOISE_RATE);
-  const total = Math.max(1, (o.end - o.start) * info.sampleRate);
-  let done = 0;
-  const push = (chs: Float32Array[]) => store.push(chs.map((c, i) => dfs[i].process(c)));
+export const SEGMENT_PARAMS = { minSec: 60, roundSec: 120, warmupSec: 10, fadeSec: 1, tailSec: 0.2 };
+export type SegmentParams = typeof SEGMENT_PARAMS;
+
+export interface DenoiseSegment {
+  /** source samples [from, to) to decode (timeline without encoder delay, as in decodeRange) */
+  from: number;
+  to: number;
+  /** output samples (48 kHz) to drop at the start, and to keep after that */
+  skip: number;
+  keep: number;
+}
+
+/**
+ * Segments for `workers` threads: one each, two each for long recordings (to even out cores of
+ * different speed), none shorter than `minSec`. Boundaries lie on the resampling grid, so each
+ * segment's output is sample-aligned with a single pass over the whole range.
+ */
+export function planDenoise(info: Pick<Mp3Info, 'sampleRate' | 'frames' | 'spf' | 'delay'>, start: number, end: number,
+  workers: number, params: Partial<SegmentParams> = {}): { segments: DenoiseSegment[]; fade: number } {
+  const p = { ...SEGMENT_PARAMS, ...params }, sr = info.sampleRate;
+  const gcd = (a: number, b: number): number => (b ? gcd(b, a % b) : a);
+  const up = DENOISE_RATE / gcd(sr, DENOISE_RATE), down = sr / gcd(sr, DENOISE_RATE);
+  const s0 = Math.max(0, Math.round(start * sr));
+  const s1 = Math.max(s0, Math.min(Math.round(end * sr), info.frames * info.spf - info.delay));
+  const n = s1 - s0, dur = n / sr;
+  const out = (k: number) => Math.ceil((k * up) / down); // output index of source offset k
+  const grid = (sec: number) => Math.ceil((sec * sr) / down) * down;
+  const count = workers > 1 ? Math.max(1, Math.min(workers * (dur >= 2 * workers * p.roundSec ? 2 : 1), Math.floor(dur / p.minSec))) : 1;
+  const bounds = Array.from({ length: count + 1 }, (_, k) => (k === count ? s1 : s0 + Math.round((k * n) / count / down) * down));
+  const warm = grid(p.warmupSec), fade = grid(p.fadeSec), tail = grid(p.tailSec);
+  const segments = bounds.slice(0, count).map((b, k) => {
+    const last = k === count - 1;
+    const from = k ? Math.max(s0, b - fade - warm) : s0;
+    const to = last ? s1 : Math.min(s1, bounds[k + 1] + tail);
+    const keepFrom = k ? out(b - fade - s0) : 0, keepTo = out(bounds[k + 1] - s0);
+    return { from, to, skip: keepFrom - out(from - s0), keep: keepTo - keepFrom };
+  });
+  return { segments, fade: count > 1 ? out(fade) : 0 };
+}
+
+/** Denoises one segment at 48 kHz; `onProgress` gets the source samples done. */
+export async function denoiseSegment(src: ByteSource, info: Mp3Info, seg: DenoiseSegment, channels: 1 | 2,
+  module: WebAssembly.Module, onProgress?: (done: number) => void): Promise<PcmStore> {
+  const sr = info.sampleRate;
+  const dfs = await Promise.all(Array.from({ length: channels }, () => Denoiser.create(module)));
+  const rs = sr === DENOISE_RATE ? null : new Resampler(sr, DENOISE_RATE, channels);
+  const store = new PcmStore(channels, DENOISE_RATE);
+  let pos = 0, done = 0;
+  const take = (chs: Float32Array[]) => {
+    const n = chs[0].length, a = Math.max(pos, seg.skip), b = Math.min(pos + n, seg.skip + seg.keep);
+    if (a < b) store.push(chs.map(c => c.subarray(a - pos, b - pos)));
+    pos += n;
+  };
+  const push = (chs: Float32Array[]) => take(chs.map((c, i) => dfs[i].process(c)));
   try {
-    await decodeRange(src, info, o.start, o.end, async raw => {
-      const chs = toChannels(raw, nch), n = chs[0].length, step = info.sampleRate;
+    await decodeRange(src, info, seg.from / sr, seg.to / sr, async raw => {
+      const chs = toChannels(raw, channels), n = chs[0].length;
       // one second at a time: smooth progress, and messages (cancel) get through in between
-      for (let i = 0; i < n; i += step) {
-        const part = chs.map(c => c.subarray(i, i + step));
+      for (let i = 0; i < n; i += sr) {
+        const part = chs.map(c => c.subarray(i, i + sr));
         push(rs ? rs.process(part) : part);
         done += part[0].length;
-        onProgress?.(Math.min(1, done / total));
+        onProgress?.(done);
         await new Promise(r => setTimeout(r, 0));
       }
     });
     if (rs) push(rs.flush());
-    store.push(dfs.map(d => d.flush()));
+    take(dfs.map(d => d.flush()));
   } finally {
     dfs.forEach(d => d.free());
   }
   store.finish();
-  return { sampleRate: store.sampleRate, read: (onBlock, p) => store.read(onBlock, p) };
+  return store;
+}
+
+/** Runs segments (in other threads, or one after another); `onProgress` gets the source samples done in total. */
+export type SegmentRunner = (segments: DenoiseSegment[], onProgress: (done: number) => void) => Promise<PcmStore[]>;
+
+export const inProcess = (src: ByteSource, info: Mp3Info, channels: 1 | 2): SegmentRunner => async (segments, onProgress) => {
+  const module = await loadDenoiser(), stores: PcmStore[] = [];
+  let done = 0;
+  for (const seg of segments) {
+    stores.push(await denoiseSegment(src, info, seg, channels, module, d => onProgress(done + d)));
+    done += seg.to - seg.from;
+  }
+  return stores;
+};
+
+/**
+ * Pass 1b (optional): room reverb and noise reduction of the cut range, at 48 kHz. Takes minutes on
+ * one core (≈ 7× real time), so it is split over `workers` threads by `runner`, runs once and is
+ * kept in memory for the following passes.
+ */
+export async function denoiseRange(src: ByteSource, info: Mp3Info, o: Pick<ProcessOptions, 'start' | 'end' | 'channels'>,
+  onProgress?: (p: number) => void, threads: { workers: number; runner: SegmentRunner } | null = null,
+  params?: Partial<SegmentParams>): Promise<RangeReader> {
+  const plan = planDenoise(info, o.start, o.end, threads?.workers ?? 1, params);
+  const total = Math.max(1, plan.segments.reduce((a, s) => a + s.to - s.from, 0));
+  const run = threads?.runner ?? inProcess(src, info, o.channels);
+  const stores = await run(plan.segments, done => onProgress?.(Math.min(1, done / total)));
+  return { sampleRate: DENOISE_RATE, read: (onBlock, p) => readJoined(stores, plan.fade, onBlock, p) };
 }
 
 function applyGain(chs: Float32Array[], g: number) {

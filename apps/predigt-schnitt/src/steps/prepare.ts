@@ -45,8 +45,8 @@ const measureRunner = serialRunner<Measurement>();
 const prepareRunner = serialRunner<Prepared>();
 
 /**
- * Denoising the cut range in the worker: minutes (≈ 7× real time), while measuring and encoding
- * run at 100× and more. It is a job of its own, so an option change that keeps range and channels
+ * Denoising the cut range in the worker: the longest step (≈ 35× real time on 6 cores, 7× on one),
+ * measuring and encoding run at 100× and more. It is a job of its own, so an option change that keeps range and channels
  * (compression, loudness, …) carries on with it instead of starting over.
  */
 let denoiseJob: { key: string; analysis: unknown; promise: Promise<void>; listeners: Set<(p: number) => void>; abort: AbortController } | null = null;
@@ -87,7 +87,7 @@ export function ensureMeasurement(ctx: Ctx, onProgress: Progress = () => undefin
   dropUnneededDenoising(ctx, o);
   return measureRunner(ctx, key, onProgress, async (progress, signal) => {
     const analysis = ctx.state.analysis;
-    const share = denoisePending(ctx, o) ? 0.95 : 0;
+    const share = denoisePending(ctx, o) ? 0.85 : 0;
     if (o.denoise) await abortable(ensureDenoised(ctx, o, p => progress(p * share, DENOISE_LABEL)), signal);
     const m = await ctx.worker.measure(o, e, p => progress(share + p * (1 - share), 'Lautheit wird gemessen …'), signal);
     // a recording loaded in the meantime must not inherit this result
@@ -106,10 +106,10 @@ export function ensurePrepared(ctx: Ctx, onProgress: Progress): Promise<Prepared
   dropUnneededDenoising(ctx, o);
   return prepareRunner(ctx, key, onProgress, async (progress, signal) => {
     const analysis = ctx.state.analysis;
-    // denoising takes most of the time; measuring about 30 % of the rest (30 min sermon: 8 s measuring,
+    // denoising takes most of the time (21 min sermon, 6 cores: 37 s of 57 s); measuring about 30 % of the rest (30 min sermon: 8 s measuring,
     // 18 s encoding + checking)
     const measured = !!ctx.state.measurement && ctx.state.measurementKey === key;
-    const dn = denoisePending(ctx, o) ? 0.9 : 0, split = dn + (measured ? 0 : 0.3 * (1 - dn));
+    const dn = denoisePending(ctx, o) ? 0.65 : 0, split = dn + (measured ? 0 : 0.3 * (1 - dn));
     if (o.denoise) await abortable(ensureDenoised(ctx, o, p => progress(p * dn, DENOISE_LABEL)), signal);
     const m = await abortable(ensureMeasurement(ctx, (p, label) => progress(dn + p * (split - dn), label)), signal);
     const encode = (label: string) => (p: number) => progress(split + p * (1 - split), label);
@@ -228,7 +228,7 @@ export function createAdvancedPanel(ctx: Ctx, details: HTMLElement, onChange: ()
   const fi = seconds('Einblenden', 'fadeIn'), fo = seconds('Ausblenden', 'fadeOut');
   const hp = check('Hochpass 80 Hz', 'Entfernt Trittschall, Rumpeln und Brummen – empfohlen für Sprache', 'highpass');
   const comp = check('Sanfte Kompression 2:1', 'Gleicht unterschiedliche Abstände zum Mikrofon aus', 'compressor');
-  const dn = check('Hall & Rauschen reduzieren', 'KI-Filter: weniger Nachhall des Raums und Hintergrundrauschen – dauert einige Minuten', 'denoise');
+  const dn = check('Hall & Rauschen reduzieren', 'KI-Filter: weniger Nachhall des Raums und Hintergrundrauschen – dauert je nach Rechner etwa 1–3 Minuten', 'denoise');
 
   const el = h('div', { class: 'advanced' },
     h('div', { class: 'advanced-head' },
