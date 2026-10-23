@@ -114,8 +114,6 @@ if (!isAdmin()) {
     },
   };
   const st = ctx.state;
-  // published files were faded in and out already; fading again would cut off more
-  for (const k of ['fadeIn', 'fadeOut'] as const) if (settings[k]) st.overrides[k] = 0;
 
   let published: Published[] = [];
   let listError = '';

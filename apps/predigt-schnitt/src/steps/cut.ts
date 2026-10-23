@@ -135,6 +135,20 @@ export function createCutStep(ctx: Ctx): Step {
 
   const zoomPx = () => fitPx * Math.pow(MAX_PX_PER_SEC / fitPx, Number(zoom.value) / 1000);
 
+  /**
+   * The whole area can be moved only while both edges are in view: otherwise the regions plugin scrolls back to its
+   * start on every move. Then the area lets the pointer through, so that dragging inside it moves the playhead as
+   * everywhere else (the area would swallow the drag even when it cannot move). The edges can always be dragged.
+   */
+  function updateDrag() {
+    if (!ws || !region?.element) return;
+    const px = zoomPx(), left = ws.getScroll() / px, right = left + ws.getWidth() / px, slack = 1 / px;
+    const drag = ctx.state.start >= left - slack && ctx.state.end <= right + slack;
+    if (drag === region.drag) return;
+    region.setOptions({ drag });
+    region.element.style.pointerEvents = drag ? 'all' : 'none';
+  }
+
   function refresh() {
     const a = ctx.state.analysis;
     if (!a) return;
@@ -142,6 +156,7 @@ export function createCutStep(ctx: Ctx): Step {
     if (document.activeElement !== endRow.input) endRow.input.value = fmtTime(ctx.state.end);
     durEl.textContent = `Länge der Auswahl: ${fmtTime(ctx.state.end - ctx.state.start, false)}`;
     drawOverview();
+    updateDrag();
   }
 
   function drawOverview() {
@@ -251,6 +266,7 @@ export function createCutStep(ctx: Ctx): Step {
         drag: true, resize: true, minLength: 1, content: h('span', { class: 'region-label' }, 'Predigt'),
       });
       reveal(ctx.state.start);
+      updateDrag();
     });
     regions.on('region-updated', (r, side) => {
       ctx.state.start = r.start;
@@ -259,6 +275,8 @@ export function createCutStep(ctx: Ctx): Step {
       refresh();
       markersChanged();
     });
+    ws.on('scroll', () => updateDrag());
+    ws.on('zoom', () => updateDrag());
     ws.on('timeupdate', t => { timeLabel.textContent = `${fmtTime(t)} / ${fmtTime(a.info.duration, false)}`; drawOverview(); });
     ws.on('play', () => { playBtn.textContent = '❚❚'; });
     ws.on('pause', () => { playBtn.textContent = '▶'; });
@@ -331,7 +349,7 @@ export function createCutStep(ctx: Ctx): Step {
     altsEl,
     h('p', { class: 'muted small keys' },
       'Tastatur: Leertaste Abspielen/Pause · S / E setzt Start / Ende an die Abspielposition · ← → verschiebt den aktiven Marker um 0,1 s (mit Umschalt 1 s) · P hört den aktiven Marker vor. ',
-      'Der orange Bereich lässt sich im Wellenbild verschieben und an den Rändern ziehen. Strg + Mausrad über dem Wellenbild zoomt.'),
+      'Start und Ende lassen sich im Wellenbild an den Rändern des orangen Bereichs ziehen; ist er ganz zu sehen, auch als Ganzes verschieben. Strg + Mausrad über dem Wellenbild zoomt.'),
     h('div', { class: 'actions' },
       h('button', { class: 'btn btn-primary', type: 'button', onclick: () => ctx.goto(STEP.export) }, 'Weiter zum Export →')),
   );

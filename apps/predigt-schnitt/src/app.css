@@ -26,6 +26,14 @@
 .wave { width: 100%; }
 .timeline { color: var(--muted); }
 .region-label { font-size: .75rem; font-weight: 600; color: var(--region-edge); padding: 2px 6px; }
+/* the edges: a 24 px grip centred on each edge instead of the plugin's 6 px strip inside the area */
+.wave ::part(region-handle) {
+  width: 24px !important; border: 0 !important; border-radius: 0 !important; pointer-events: all;
+  background: linear-gradient(to right, transparent 11px, var(--region-edge) 11px 13px, transparent 13px);
+}
+.wave ::part(region-handle):hover { background: linear-gradient(to right, transparent 10px, var(--region-edge) 10px 14px, transparent 14px); }
+.wave ::part(region-handle-left) { left: -12px !important; }
+.wave ::part(region-handle-right) { right: -12px !important; }
 .transport { margin: .75rem 0; }
 .transport .play { width: 2.6rem; justify-content: center; }
 .transport .time { min-width: 10rem; }

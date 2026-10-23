@@ -233,9 +233,9 @@ Die Kachel sieht nur der Admin; der Server lässt nur ihn zu.
      **Alle nacheinander bearbeiten und hochladen**: Die Dateien laufen dann ohne weiteres Zutun mit den Einstellungen aus
      Schritt 2 durch und landen auf dem NAS (Status je Datei in der Liste, *Nach dieser Datei anhalten* möglich).
      Der Name auf dem NAS ist der Dateiname, bereinigt (`predigt-eag-261018(1).mp3` → `predigt-eag-261018-1.mp3`).
-2. **Bearbeitung** – Lautheit, Format, Hochpass, Kompression, Hall & Rauschen für alle Dateien auf der Seite. Voreingestellt
-   sind die Standardwerte von Predigt-Schnitt, aber ohne Ein- und Ausblenden (das haben veröffentlichte Dateien schon);
-   Änderungen gelten nur hier, die Standardwerte bleiben unverändert.
+2. **Bearbeitung** – Lautheit, Format, Ein-/Ausblenden, Hochpass, Kompression, Hall & Rauschen für alle Dateien auf der Seite.
+   Voreingestellt sind die Standardwerte von Predigt-Schnitt (auch 0,5 s Ein- und Ausblenden); Änderungen gelten nur hier,
+   die Standardwerte bleiben unverändert.
 3. **Datei** – die ganze Datei (kein Schnitt). Titel, Prediger/in, Album, Jahr, Kommentar und Cover werden aus der Datei
    übernommen und können geändert werden; hat der Admin ein Cover eingestellt, kann es das bisherige ersetzen. Hat eine Datei
    vom Rechner keine Tags, kommen sie von der gleichnamigen Datei auf dem NAS. Die Berechnung startet sofort im Hintergrund
