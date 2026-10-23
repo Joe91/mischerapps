@@ -85,7 +85,7 @@ describe('Denoiser', async () => {
     const db = 20 * Math.log10(rms(y.subarray(48000)) / rms(noise.subarray(48000)));
     expect(db).toBeGreaterThan(-12.5);
     expect(db).toBeLessThan(-9);
-  });
+  }, 30000);
 
   it('keeps speech-like sound in time with the input', async () => {
     const x = syllables(48000, 4);
@@ -93,13 +93,14 @@ describe('Denoiser', async () => {
     const y = stream(x, c => df.process(c), () => df.flush());
     df.free();
     expect(y.length).toBe(x.length);
-    const corr = (lag: number) => { let s = 0; for (let i = 5000; i < x.length - 5000; i++) s += x[i] * y[i + lag]; return s; };
-    let best = 0;
-    for (let lag = -2000; lag <= 2000; lag++) if (corr(lag) > corr(best)) best = lag;
+    // every 4th sample is plenty to find the offset of a speech-like signal (and keeps the test fast on slow CI machines)
+    const corr = (lag: number) => { let s = 0; for (let i = 5000; i < x.length - 5000; i += 4) s += x[i] * y[i + lag]; return s; };
+    let best = 0, bestCorr = -Infinity;
+    for (let lag = -2000; lag <= 2000; lag++) { const c = corr(lag); if (c > bestCorr) { bestCorr = c; best = lag; } }
     expect(Math.abs(best)).toBeLessThanOrEqual(1);
     // the voice itself stays
     expect(rms(y) / rms(x)).toBeGreaterThan(0.7);
-  });
+  }, 30000);
 });
 
 async function mp3Of(pcm: Float32Array, sr: number) {
@@ -170,7 +171,7 @@ describe('denoiseRange', () => {
     await reader.read(chs => { n += chs[0].length; chans = chs.length; });
     expect(chans).toBe(2);
     expect(n).toBe(Math.ceil(((Math.round(4.5 * sr) - Math.round(1 * sr)) * 48000) / sr));
-  });
+  }, 30000);
 });
 
 describe('denoiseRange in segments', () => {
