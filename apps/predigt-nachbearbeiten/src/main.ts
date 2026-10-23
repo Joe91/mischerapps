@@ -582,13 +582,25 @@ if (!isAdmin()) {
       try {
         if (!await open(item.source)) throw new Error('nicht geladen');
         await create();
+        // a quick server may report "stored" before save() returns: then the item is done, nothing to wait for
+        let settled = false, waiting = false;
         let report: (ok: boolean, message: string) => void = () => undefined;
         const result = new Promise<void>(r => {
-          report = (good, message) => { item.set(good ? 'done' : 'error', message); if (good) ok++; run.waiting--; renderLists(); r(); };
+          report = (good, message) => {
+            settled = true;
+            item.set(good ? 'done' : 'error', message);
+            if (good) ok++;
+            if (waiting) run.waiting--;
+            renderLists();
+            r();
+          };
         });
         if (!await save(true, report)) throw new Error('nicht gespeichert');
-        run.waiting++;
-        item.set('running', `wird in ${T} gespeichert …`);
+        if (!settled) {
+          waiting = true;
+          run.waiting++;
+          item.set('running', `wird in ${T} gespeichert …`);
+        }
         pending.push(result);
       } catch (e) {
         item.set('error', `⚠ ${(e as Error).message}`);
