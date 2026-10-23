@@ -16,7 +16,7 @@
   {
     "id": "predigt-nachbearbeiten",
     "title": "Predigt nachbearbeiten",
-    "description": "Veröffentlichte Predigten neu bearbeiten (z. B. Hall & Rauschen reduzieren) und ersetzen – vom NAS oder vom Rechner, auch mehrere",
+    "description": "Veröffentlichte Predigten neu bearbeiten (z. B. Hall & Rauschen reduzieren) und ersetzen – auch mehrere vom Rechner",
     "path": "apps/predigt-nachbearbeiten/",
     "icon": "🔁",
     "adminOnly": true

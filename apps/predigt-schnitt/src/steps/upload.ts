@@ -1,61 +1,40 @@
 import { h, progressBar, download, toast } from '../../../../packages/ui-kit/dom';
-import { isAdmin } from '../../../../packages/auth/auth';
+import { publishTarget } from '../../../../packages/auth/auth';
 import { uploadFile } from '../../../../packages/upload/http-upload';
-import { uploadToCloud } from '../../../../packages/upload/cloud-upload';
-import { UPLOAD_KINDS, profileKind, SERVER_PROFILE } from '../settings';
 import { STEP, type Ctx, type Step } from '../context';
 import { isValidFileName, sanitizeFileName } from '../naming';
 
+/** Publishes the export: the server stores it in the shared OpenCloud folder (or on the NAS without cloud configuration). */
 export function createUploadStep(ctx: Ctx): Step {
-  const profileSel = h('select');
   const nameInput = h('input', { class: 'mono', spellcheck: 'false' });
   const status = h('div');
   const target = h('p', { class: 'muted small' });
   let abort: (() => void) | null = null;
 
-  profileSel.addEventListener('change', () => { ctx.settings.activeProfileId = profileSel.value; ctx.saveSettings(); showTarget(); });
   nameInput.addEventListener('change', () => { ctx.state.fileName = sanitizeFileName(nameInput.value); nameInput.value = ctx.state.fileName; });
 
-  // the mischer user always uploads to the server; the admin may pick another target
-  const profile = () => isAdmin()
-    ? ctx.settings.profiles.find(p => p.id === profileSel.value)
-    : ctx.settings.profiles.find(p => profileKind(p) === 'server') ?? SERVER_PROFILE;
-
-  function showTarget() {
-    const p = profile();
-    target.textContent = p && isAdmin() ? `Ziel: ${UPLOAD_KINDS[profileKind(p)].label}${profileKind(p) === 'server' ? '' : ` – ${p.url}`}` : '';
-    uploadBtn.disabled = !p;
-  }
-
-  function fillProfiles() {
-    const ps = ctx.settings.profiles;
-    profileSel.replaceChildren(...ps.map(p => h('option', { value: p.id }, p.name || p.url)));
-    if (ps.some(p => p.id === ctx.settings.activeProfileId)) profileSel.value = ctx.settings.activeProfileId;
-    showTarget();
-    profileSel.parentElement?.classList.toggle('hidden', !isAdmin());
-  }
+  const where = () => publishTarget() === 'OpenCloud' ? 'den gemeinsamen Ordner in OpenCloud' : 'das NAS';
 
   async function upload() {
-    const r = ctx.state.rendered, p = profile();
-    if (!r || !p) return;
+    const r = ctx.state.rendered;
+    if (!r) return;
     const name = sanitizeFileName(nameInput.value);
     nameInput.value = name;
     ctx.state.fileName = name;
     if (!isValidFileName(name)) { toast('Ungültiger Dateiname.', 'error'); return; }
-    const kind = profileKind(p);
     const bar = progressBar('Lade hoch …');
     const cancel = h('button', { class: 'btn btn-sm', type: 'button', onclick: () => abort?.() }, 'Abbrechen');
     status.replaceChildren(h('div', { class: 'row' }, bar.el, cancel));
     uploadBtn.disabled = true;
     try {
-      const progress = (x: number) => bar.set(x, 'Lade hoch …');
-      const up = kind === 'server'
-        ? uploadFile(p.url, r.blob, name, progress)
-        : uploadToCloud(kind, p.url, p.token, r.blob, name, progress);
+      const up = uploadFile(r.blob, name, (p, stored) => {
+        bar.set(p, stored ? `Wird in ${publishTarget()} gespeichert …` : 'Lade hoch …');
+        if (stored) cancel.remove(); // the server finishes it now
+      });
       abort = up.abort;
       await up.promise;
       ctx.state.uploadedAs = name;
-      status.replaceChildren(h('div', { class: 'notice ok' }, `Hochgeladen: ${name} → ${p.name || p.url}`));
+      status.replaceChildren(h('div', { class: 'notice ok' }, `Veröffentlicht: ${name} → ${publishTarget()}`));
     } catch (e) {
       status.replaceChildren(h('div', { class: 'notice error' }, (e as Error).message));
     } finally {
@@ -65,13 +44,10 @@ export function createUploadStep(ctx: Ctx): Step {
   }
 
   const uploadBtn = h('button', { class: 'btn btn-primary', type: 'button', onclick: upload }, '⬆ Hochladen');
-  const profileRow = h('div', { class: 'grid' },
-    h('label', null, 'Upload-Ziel', profileSel),
-    h('label', null, 'Dateiname', nameInput),
-  );
   const el = h('section', { class: 'card' },
     h('div', { class: 'card-head' }, h('h2', null, '4 · Upload')),
-    profileRow, target,
+    h('div', { class: 'grid' }, h('label', null, 'Dateiname', nameInput)),
+    target,
     h('div', { class: 'actions' },
       h('button', { class: 'btn', type: 'button', onclick: () => ctx.goto(STEP.export) }, '← Export'),
       h('button', { class: 'btn', type: 'button', onclick: () => ctx.state.rendered && download(ctx.state.rendered.blob, sanitizeFileName(nameInput.value)) }, '⬇ Herunterladen'),
@@ -85,8 +61,8 @@ export function createUploadStep(ctx: Ctx): Step {
     el,
     enter() {
       nameInput.value = ctx.state.fileName;
-      fillProfiles();
-      status.replaceChildren(ctx.state.uploadedAs ? h('div', { class: 'notice ok' }, `Bereits hochgeladen als ${ctx.state.uploadedAs}.`) : '');
+      target.textContent = `Die Datei wird in ${where()} hochgeladen. Eine vorhandene Datei gleichen Namens wird nie überschrieben.`;
+      status.replaceChildren(ctx.state.uploadedAs ? h('div', { class: 'notice ok' }, `Bereits veröffentlicht als ${ctx.state.uploadedAs}.`) : '');
     },
   };
 }

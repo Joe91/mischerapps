@@ -2,6 +2,7 @@
 import { accessSync, constants, mkdirSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { createApi } from './api';
+import { createStore, describeStoreError } from './sermon-store';
 import { ConfigError, loadConfig } from './config';
 import { createStatic } from './static';
 
@@ -23,7 +24,8 @@ try {
   process.exit(1);
 }
 
-const api = createApi(cfg);
+const store = createStore(cfg.cloud, cfg.dataDir);
+const api = createApi(cfg, store);
 const serveStatic = createStatic(cfg.staticDir);
 
 const server = createServer(async (req, res) => {
@@ -40,6 +42,15 @@ const server = createServer(async (req, res) => {
 });
 server.requestTimeout = 0; // large uploads over slow mobile links
 server.listen(port, '0.0.0.0', () => console.log(`Mischer-App läuft auf Port ${port} (Daten: ${cfg.dataDir}, Konfiguration: ${configFile})`));
+// a wrong or expired app token shows up in the log right away, not only at the next upload
+if (cfg.cloud) {
+  store.list().then(
+    files => console.log(`OpenCloud erreichbar: ${files.length} Datei(en) im Ordner ${cfg.cloud!.url}`),
+    e => console.error(`OpenCloud: ${describeStoreError(e)}`),
+  );
+} else {
+  console.log('Kein "cloud" in der Konfiguration: Predigten werden im Datenverzeichnis gespeichert (predigten/).');
+}
 
 process.on('unhandledRejection', e => console.error('unhandled rejection', e));
 for (const sig of ['SIGTERM', 'SIGINT'] as const) process.on(sig, () => server.close(() => process.exit(0)));

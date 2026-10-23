@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createServer, type Server } from 'node:http';
+import { readFileSync } from 'node:fs';
 import { mkdtemp, readFile, readdir, rm, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -15,7 +16,7 @@ import writeExcelFile from 'write-excel-file/universal';
 let server: Server, base: string, dir: string;
 const cfg = (): ServerConfig => ({
   users: { admin: 'admin-password', mischer: hashPassword('mischer-password') },
-  dataDir: join(dir, 'data'), staticDir: join(dir, 'dist'), sessionSecret: 'test-secret-test-secret', sessionDays: 30, maxUploadMb: 1, secureCookies: false,
+  dataDir: join(dir, 'data'), staticDir: join(dir, 'dist'), sessionSecret: 'test-secret-test-secret', sessionDays: 30, maxUploadMb: 1, secureCookies: false, cloud: null,
 });
 
 beforeAll(async () => {
@@ -58,9 +59,9 @@ describe('login', () => {
     const a = await login('Admin', 'admin-password');
     expect(a.res.status).toBe(200);
     expect(a.res.headers.get('set-cookie')).toMatch(/HttpOnly; SameSite=Strict/);
-    expect(await (await fetch(`${base}/api/me`, as(a.cookie))).json()).toEqual({ user: 'admin', role: 'admin' });
+    expect(await (await fetch(`${base}/api/me`, as(a.cookie))).json()).toEqual({ user: 'admin', role: 'admin', target: 'NAS' });
     const m = await login('mischer', 'mischer-password');
-    expect(await (await fetch(`${base}/api/me`, as(m.cookie))).json()).toEqual({ user: 'mischer', role: 'mischer' });
+    expect(await (await fetch(`${base}/api/me`, as(m.cookie))).json()).toEqual({ user: 'mischer', role: 'mischer', target: 'NAS' });
   });
 
   it('rejects wrong passwords and unknown users', async () => {
@@ -331,7 +332,8 @@ describe('upload', () => {
     expect((await fetch(`${base}/api/uploads/..%2Fsettings.json`, as(a))).status).toBe(400);
     expect((await fetch(`${base}/api/uploads/%E0%A4%A.mp3`, as(a))).status).toBe(400);
     expect((await fetch(`${base}/api/uploads/missing.mp3`, as(a))).status).toBe(404);
-    expect((await readdir(join(dir, 'data/predigten'))).filter(n => n.endsWith('.tmp'))).toEqual([]); // no temporary files left
+    expect(await readdir(join(dir, 'data/tmp'))).toEqual([]); // no temporary files left
+    expect(await readFile(join(dir, 'data/original/replace-me.mp3'), 'latin1')).toBe('ID3 v1');
   });
 });
 
@@ -393,5 +395,12 @@ describe('auth helpers and config', () => {
     expect(() => parseConfig({ users: { admin: { password: 'same-password' }, mischer: { password: 'same-password' } } }, {})).toThrow(/verschiedene/);
     expect(() => parseConfig({ ...ok, sessionSecret: 'short' }, {})).toThrow(/sessionSecret/);
     expect(() => parseConfig({}, {})).toThrow(ConfigError);
+    expect(parseConfig(ok, {}).cloud).toBeNull();
+    const cloud = { url: 'https://cloud.example.org/dav/spaces/a$b!c', user: 'jo', token: 'two words ' };
+    expect(parseConfig({ ...ok, cloud }, {}).cloud).toEqual({ url: 'https://cloud.example.org/dav/spaces/a$b!c/', user: 'jo', token: 'two words ' });
+    const example = JSON.parse(readFileSync(new URL('../config.example.json', import.meta.url), 'utf8'));
+    expect(() => parseConfig({ ...ok, cloud: example.cloud }, {})).toThrow(/cloud.url ist noch der Platzhalter/);
+    expect(() => parseConfig({ ...ok, cloud: { ...cloud, token: '' } }, {})).toThrow(/cloud.token fehlt/);
+    expect(() => parseConfig({ ...ok, cloud: { ...cloud, url: 'ftp://x/' } }, {})).toThrow(/https/);
   });
 });

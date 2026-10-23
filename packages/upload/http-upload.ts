@@ -19,25 +19,44 @@ export function describeUploadError(status: number, body: string): string {
     case 413: return 'Der Server hat die Datei abgelehnt: Datei zu groß.';
     case 415: return 'Der Server hat die Datei abgelehnt: keine gültige MP3-Datei.';
     case 500: return `Fehler auf dem Server beim Speichern${b ? ` (${b})` : ''}.`;
+    case 502: return describeCloudError(b);
     default: return `Upload fehlgeschlagen (${status}${b ? `: ${b.slice(0, 200)}` : ''}).`;
   }
 }
 
-/** Uploads to the server this app is served from; the login cookie is sent automatically. */
-export const uploadFile = (url: string, file: Blob, name: string, onProgress: (p: number) => void) =>
-  send('POST', `${url}${url.includes('?') ? '&' : '?'}name=${encodeURIComponent(name)}`, file, onProgress);
+/** The server passes on what OpenCloud answered (see server/sermon-store.ts). */
+function describeCloudError(b: string): string {
+  if (b === 'cloud 401') return 'OpenCloud hat die Anmeldung des Servers abgelehnt – das App-Token ist vermutlich abgelaufen. ' +
+    'Bitte dem Admin Bescheid geben (neues Token in der config.json). Die Datei vorher herunterladen.';
+  if (b === 'cloud 404') return 'Der Ordner in OpenCloud wurde nicht gefunden (gelöscht oder nicht mehr freigegeben?). Bitte dem Admin Bescheid geben.';
+  if (b === 'cloud 403') return 'OpenCloud erlaubt dem Server das Schreiben in den Ordner nicht (Freigabe nur zum Lesen?). Bitte dem Admin Bescheid geben.';
+  if (b === 'cloud 507') return 'Der Speicherplatz in OpenCloud ist voll.';
+  if (b.startsWith('cloud unreachable')) return 'OpenCloud ist gerade nicht erreichbar. Bitte später noch einmal hochladen (die Datei vorher herunterladen).';
+  return `OpenCloud hat die Datei nicht angenommen${b ? ` (${b})` : ''}.`;
+}
 
-/** Admin: replaces the published file `name` on the server (the first version is kept there, see server/api.ts). */
-export const replaceUpload = (name: string, file: Blob, onProgress: (p: number) => void) =>
+/**
+ * Progress of an upload; `stored`: the file has reached the server, which is now passing it on to OpenCloud
+ * (the answer comes when it is stored there).
+ */
+export type UploadProgress = (p: number, stored?: boolean) => void;
+
+/** Publishes the file under `name` via the server; the login cookie is sent automatically. */
+export const uploadFile = (file: Blob, name: string, onProgress: UploadProgress) =>
+  send('POST', `/api/upload?name=${encodeURIComponent(name)}`, file, onProgress);
+
+/** Admin: replaces the published file `name` (the server keeps the first version, see server/api.ts). */
+export const replaceUpload = (name: string, file: Blob, onProgress: UploadProgress) =>
   send('PUT', `/api/uploads/${encodeURIComponent(name)}`, file, onProgress);
 
 function send(method: 'POST' | 'PUT', url: string, file: Blob,
-  onProgress: (p: number) => void): { promise: Promise<string>; abort: () => void } {
+  onProgress: UploadProgress): { promise: Promise<string>; abort: () => void } {
   const xhr = new XMLHttpRequest(); // XHR, because fetch has no upload progress
   const promise = new Promise<string>((resolve, reject) => {
     xhr.open(method, url);
     xhr.setRequestHeader('Content-Type', 'audio/mpeg');
     xhr.upload.onprogress = e => e.lengthComputable && onProgress(e.loaded / e.total);
+    xhr.upload.onload = () => onProgress(1, true);
     xhr.onload = () => xhr.status >= 200 && xhr.status < 300
       ? resolve(xhr.responseText)
       : reject(new UploadError(xhr.status, xhr.responseText));

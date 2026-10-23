@@ -1,5 +1,6 @@
 // The real API (server/api.ts) inside `npm run dev` / `npm run preview`, with a throw-away configuration.
-// Logins: admin / admin and mischer / mischer. Data lands in ./uploads-dev/. Never part of the build.
+// Logins: admin / admin and mischer / mischer. Data lands in ./uploads-dev/; published MP3s too, unless
+// CLOUD_URL, CLOUD_USER and CLOUD_TOKEN name an OpenCloud folder (see scripts/cloud-testserver.sh). Never part of the build.
 import type { Plugin, Connect } from 'vite';
 import { resolve } from 'node:path';
 import { createApi } from './server/api';
@@ -13,6 +14,9 @@ function handler(): Connect.NextHandleFunction {
     sessionDays: 30,
     maxUploadMb: 150,
     secureCookies: false,
+    cloud: process.env.CLOUD_URL
+      ? { url: process.env.CLOUD_URL.replace(/\/?$/, '/'), user: process.env.CLOUD_USER ?? '', token: process.env.CLOUD_TOKEN ?? '' }
+      : null,
   });
   return (req, res, next) => { api(req, res).then(handled => { if (!handled) next(); }, next); };
 }

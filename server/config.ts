@@ -18,7 +18,12 @@ export interface ServerConfig {
   maxUploadMb: number;
   /** always set the cookie's Secure flag (otherwise only if the proxy says X-Forwarded-Proto: https) */
   secureCookies: boolean;
+  /** the OpenCloud folder the sermons are published to; without it they stay in dataDir/predigten (development) */
+  cloud: CloudConfig | null;
 }
+
+/** WebDAV access to the shared folder: its WebDAV URL and an app token of a user who may edit it. */
+export interface CloudConfig { url: string; user: string; token: string; }
 
 export class ConfigError extends Error {}
 
@@ -45,6 +50,20 @@ export function parseConfig(raw: unknown, env: NodeJS.ProcessEnv = process.env):
     throw new ConfigError('config: sessionSecret muss mindestens 16 Zeichen lang sein (oder weglassen).');
   }
   const secret = typeof raw.sessionSecret === 'string' ? raw.sessionSecret : null;
+  let cloud: CloudConfig | null = null;
+  if (raw.cloud !== undefined) {
+    const c = raw.cloud;
+    if (!isObject(c)) throw new ConfigError('config: "cloud" muss ein Objekt mit url, user und token sein.');
+    for (const k of ['url', 'user', 'token'] as const) {
+      if (typeof c[k] !== 'string' || !c[k].trim()) throw new ConfigError(`config: cloud.${k} fehlt.`);
+      if (String(c[k]).startsWith('CHANGE-ME')) throw new ConfigError(`config: cloud.${k} ist noch der Platzhalter.`);
+    }
+    let url: URL;
+    try { url = new URL(String(c.url).trim()); } catch { throw new ConfigError('config: cloud.url ist keine gültige Adresse.'); }
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new ConfigError('config: cloud.url muss mit https:// beginnen.');
+    // the folder's WebDAV URL as OpenCloud shows it; a trailing slash makes file URLs relative to it
+    cloud = { url: url.href.replace(/\/?$/, '/'), user: String(c.user).trim(), token: String(c.token) };
+  }
   return {
     users,
     dataDir: resolve(env.DATA_DIR ?? '/data'),
@@ -53,6 +72,7 @@ export function parseConfig(raw: unknown, env: NodeJS.ProcessEnv = process.env):
     sessionDays: num(raw.sessionDays, 30, 'sessionDays'),
     maxUploadMb: num(raw.maxUploadMb, 150, 'maxUploadMb'),
     secureCookies: raw.secureCookies === true,
+    cloud,
   };
 }
 

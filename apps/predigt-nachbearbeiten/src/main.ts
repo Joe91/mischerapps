@@ -1,12 +1,12 @@
-// Admin tool: reprocesses sermons that were published already – from the NAS (data/predigten) or picked on this
-// computer, one at a time or several in a row – with the same processing as Predigt-Schnitt (loudness,
-// compression, denoising, format), then replaces them on the NAS or uploads them as new files. Tags and cover
-// are taken over from each file. On the first replacement the server keeps the file as published in
-// predigten/original/, and that version is the default source for any further run.
+// Admin tool: reprocesses sermons that were published already – from the shared OpenCloud folder (through the
+// server) or picked on this computer, one at a time or several in a row – with the same processing as
+// Predigt-Schnitt (loudness, compression, denoising, format), then replaces them there or publishes them as new
+// files. Tags and cover are taken over from each file. On the first replacement the server keeps the file as
+// published on the NAS (data/original/), and that version is the default source for any further run.
 import '../../../packages/ui-kit/ui.css';
 import '../../predigt-schnitt/src/app.css';
 import './app.css';
-import { ensureLogin, isAdmin, logout } from '../../../packages/auth/auth';
+import { ensureLogin, isAdmin, logout, publishTarget } from '../../../packages/auth/auth';
 import { loadShared } from '../../../packages/settings/shared';
 import { AudioWorkerClient } from '../../../packages/audio-core/client';
 import { id3Length, readTags, tagMp3, type Tags } from '../../../packages/audio-core/tags';
@@ -20,13 +20,13 @@ import { isValidFileName, sanitizeFileName } from '../../predigt-schnitt/src/nam
 /** An entry of GET /api/uploads; `original`: replaced before, the first version is kept on the server. */
 interface Published { name: string; size: number; modified: string; original: boolean; }
 
-/** A file picked on this computer; `target` is the name it gets on the NAS. */
+/** A file picked on this computer; `target` is the name it is published under. */
 interface LocalFile { file: File; target: string; state: 'waiting' | 'running' | 'done' | 'error'; status: string; }
 
 type Source = { published: Published; fromOriginal: boolean } | { local: LocalFile };
 
-/** `tagsFromNas`: the local file had no tags, they come from the file it replaces */
-interface Loaded { src: Source; target: string; size: number; tags: Tags; tagsFromNas: boolean; }
+/** `tagsFromPublished`: the local file had no tags, they come from the file it replaces */
+interface Loaded { src: Source; target: string; size: number; tags: Tags; tagsFromPublished: boolean; }
 
 const ACCEPT = '.mp3,.wav,audio/mpeg,audio/wav,audio/x-wav,audio/wave';
 const isAudio = (f: File) => /\.(mp3|wav)$/i.test(f.name) || /^audio\/(mpeg|wav|x-wav|wave)$/.test(f.type);
@@ -123,10 +123,13 @@ if (!isAdmin()) {
   /** several local files processed and uploaded in a row */
   let batch: { stop: boolean; at: number; of: number } | null = null;
 
-  const onNas = (name: string) => published.find(f => f.name === name);
+  const findPublished = (name: string) => published.find(f => f.name === name);
+  /** where the files are published: "OpenCloud" (or "NAS" without cloud configuration) */
+  const T = publishTarget(), inT = T === 'OpenCloud' ? 'in OpenCloud' : 'auf dem NAS';
+  const KEPT = 'auf dem NAS (data/original/)';
   const fileUrl = (name: string, original = false) => `/api/uploads/${encodeURIComponent(name)}${original ? '?original=1' : ''}`;
 
-  // ---- 1 · files: on the NAS ----
+  // ---- 1 · files: published ----
 
   const filter = h('input', { type: 'search', placeholder: 'Suchen, z. B. 2603', 'aria-label': 'Dateien filtern' });
   const listBox = h('div');
@@ -143,7 +146,7 @@ if (!isAdmin()) {
       listError = `Die Liste konnte nicht geladen werden (${(e as Error).message}).`;
     }
     renderList();
-    renderLocal(); // marks local files that would replace one on the NAS
+    renderLocal(); // marks local files that would replace a published one
   }
 
   function renderList() {
@@ -151,12 +154,12 @@ if (!isAdmin()) {
     const shown = published.filter(f => f.name.toLowerCase().includes(q));
     listBox.replaceChildren(
       listError ? h('div', { class: 'notice error' }, listError) : '',
-      !published.length && !listError ? h('p', { class: 'muted' }, 'Auf dem NAS liegen noch keine Predigten.') : '',
+      !published.length && !listError ? h('p', { class: 'muted' }, `${inT[0].toUpperCase()}${inT.slice(1)} liegen noch keine Predigten.`) : '',
       published.length && !shown.length ? h('p', { class: 'muted' }, 'Keine Datei passt zur Suche.') : '',
       shown.length ? h('ul', { class: 'file-list' }, shown.map(f =>
         h('li', { class: `file-row${loaded && 'published' in loaded.src && loaded.target === f.name ? ' active' : ''}` },
           h('span', { class: 'file-cell mono' }, f.name),
-          f.original ? h('span', { class: 'badge', title: 'Wurde schon ersetzt; die erste Fassung liegt in predigten/original/.' }, 'nachbearbeitet') : '',
+          f.original ? h('span', { class: 'badge', title: `Wurde schon ersetzt; die erste Fassung liegt ${KEPT}.` }, 'nachbearbeitet') : '',
           h('span', { class: 'muted small' }, `${new Date(f.modified).toLocaleDateString('de-DE')} · ${fmtBytes(f.size)}`),
           h('span', { class: 'row-buttons' },
             f.original ? h('a', {
@@ -205,10 +208,10 @@ if (!isAdmin()) {
       locals.length ? h('ul', { class: 'file-list' }, locals.map(l =>
         h('li', { class: `file-row${loaded && 'local' in loaded.src && loaded.src.local === l ? ' active' : ''}` },
           h('span', { class: 'file-cell mono' }, l.file.name),
-          l.target !== l.file.name ? h('span', { class: 'muted small mono', title: 'Name auf dem NAS' }, `→ ${l.target}`) : '',
+          l.target !== l.file.name ? h('span', { class: 'muted small mono', title: `Name ${inT}` }, `→ ${l.target}`) : '',
           h('span', { class: 'muted small' }, fmtBytes(l.file.size)),
-          l.state !== 'done' && onNas(l.target)
-            ? h('span', { class: 'badge', title: 'Eine Datei mit diesem Namen liegt schon auf dem NAS; sie wird ersetzt.' }, 'ersetzt NAS-Datei') : '',
+          l.state !== 'done' && findPublished(l.target)
+            ? h('span', { class: 'badge', title: `Eine Datei mit diesem Namen liegt schon ${inT}; sie wird ersetzt.` }, 'ersetzt veröffentlichte') : '',
           l.status ? h('span', { class: `small local-status ${l.state}` }, l.status) : '',
           h('span', { class: 'row-buttons' },
             h('button', { class: 'btn btn-sm', type: 'button', disabled: busy || !!batch, onclick: () => open({ local: l }).catch(noop) }, 'Bearbeiten'),
@@ -225,7 +228,7 @@ if (!isAdmin()) {
         done ? h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => { locals.splice(0, locals.length, ...locals.filter(l => l.state !== 'done')); renderLocal(); } },
           'Erledigte entfernen') : '',
         todo ? h('button', { class: 'btn btn-primary', type: 'button', disabled: busy, onclick: runBatch },
-          todo === 1 ? 'Bearbeiten und hochladen' : `Alle ${todo} nacheinander bearbeiten und hochladen`) : '',
+          todo === 1 ? 'Bearbeiten und veröffentlichen' : `Alle ${todo} nacheinander bearbeiten und veröffentlichen`) : '',
       ) : '',
     );
   }
@@ -233,7 +236,7 @@ if (!isAdmin()) {
   function renderLists() { renderList(); renderLocal(); }
 
   /**
-   * Loads a file into the editor and decodes it in the worker: from the NAS (by default its first version, so it
+   * Loads a file into the editor and decodes it in the worker: a published one (by default its first version, so it
    * is not processed twice) or from this computer. Resolves false when nothing was started; rejects on errors.
    */
   async function open(src: Source): Promise<boolean> {
@@ -252,7 +255,7 @@ if (!isAdmin()) {
     try {
       let file: File, bytes: Uint8Array;
       if (pub) {
-        bytes = await fetchPublished(name, pub.fromOriginal, p => bar.set(p * 0.3, 'Wird vom NAS geladen …'));
+        bytes = await fetchPublished(name, pub.fromOriginal, p => bar.set(p * 0.3, `Wird aus ${T} geladen …`));
         file = new File([bytes as Uint8Array<ArrayBuffer>], name, { type: 'audio/mpeg' });
       } else {
         file = local!.file;
@@ -263,13 +266,13 @@ if (!isAdmin()) {
         p => bar.set(share + p * (1 - share), 'Wird dekodiert …'));
       Object.assign(st, { file, audioUrl: URL.createObjectURL(file), analysis: out, start: 0, end: out.info.duration, fileName: name });
       const target = pub ? name : local!.target;
-      let tags = readTags(bytes), tagsFromNas = false;
+      let tags = readTags(bytes), tagsFromPublished = false;
       // a local copy without tags must not wipe title, preacher and cover of the published file it replaces
-      if (local && !Object.keys(tags).length && onNas(target)) {
+      if (local && !Object.keys(tags).length && findPublished(target)) {
         tags = await publishedTags(target).catch(() => ({}));
-        tagsFromNas = Object.keys(tags).length > 0;
+        tagsFromPublished = Object.keys(tags).length > 0;
       }
-      loaded = { src, target, size: file.size, tags, tagsFromNas };
+      loaded = { src, target, size: file.size, tags, tagsFromPublished };
       loadStatus.replaceChildren();
       showEditor();
       return true;
@@ -334,7 +337,7 @@ if (!isAdmin()) {
   nameInput.addEventListener('change', () => { nameInput.value = sanitizeFileName(nameInput.value); showSaveLabel(); });
 
   function showSaveLabel() {
-    saveBtn.textContent = onNas(sanitizeFileName(nameInput.value)) ? '⬆ Auf dem NAS ersetzen' : '⬆ Auf das NAS hochladen';
+    saveBtn.textContent = findPublished(sanitizeFileName(nameInput.value)) ? `⬆ ${inT[0].toUpperCase()}${inT.slice(1)} ersetzen` : '⬆ Veröffentlichen';
   }
 
   /** Tags or options changed: the finished file no longer matches. */
@@ -350,7 +353,7 @@ if (!isAdmin()) {
     heading.textContent = `3 · ${l.target}`;
     const size = `${fmtTime(st.end, false)} · ${fmtBytes(l.size)}`;
     source.replaceChildren(...'published' in src ? [
-      h('span', null, `Vom NAS · ${size}`),
+      h('span', null, `Aus ${T} · ${size}`),
       src.fromOriginal ? h('span', null, '· Ausgang: die zuerst veröffentlichte Fassung')
         : src.published.original ? h('span', null, '· Ausgang: die aktuelle, schon nachbearbeitete Fassung') : '',
       src.published.original ? h('button', {
@@ -358,8 +361,8 @@ if (!isAdmin()) {
       }, src.fromOriginal ? 'Stattdessen die aktuelle Fassung laden' : 'Die erste Fassung laden') : '',
     ] : [
       h('span', null, `Vom Rechner: ${src.local.file.name} · ${size}`),
-      h('span', null, onNas(l.target) ? '· ersetzt die gleichnamige Datei auf dem NAS' : '· wird neu auf das NAS hochgeladen'),
-      l.tagsFromNas ? h('span', null, '· Titel, Prediger und Cover von der Datei auf dem NAS übernommen') : '',
+      h('span', null, findPublished(l.target) ? `· ersetzt die gleichnamige Datei ${inT}` : `· wird neu ${inT} veröffentlicht`),
+      l.tagsFromPublished ? h('span', null, `· Titel, Prediger und Cover von der Datei ${inT} übernommen`) : '',
     ]);
     before.src = st.audioUrl!;
     title.input.value = t.title ?? ''; artist.input.value = t.artist ?? ''; album.input.value = t.album ?? '';
@@ -415,7 +418,7 @@ if (!isAdmin()) {
           h('dt', null, 'True Peak'), h('dd', { class: tpOk ? '' : 'warn-text' }, `${fmtNum(r.stats.truePeakDb)} dBTP (max. ${fmtNum(target.tp)})`),
         ),
       ),
-      h('label', { class: 'file-name' }, 'Dateiname – liegt eine Datei mit diesem Namen auf dem NAS, wird sie ersetzt', nameInput),
+      h('label', { class: 'file-name' }, `Dateiname – liegt eine Datei mit diesem Namen ${inT}, wird sie ersetzt`, nameInput),
       h('div', { class: 'actions' },
         h('button', { class: 'btn', type: 'button', onclick: () => download(r.blob, sanitizeFileName(nameInput.value)) }, '⬇ Herunterladen'),
         saveBtn),
@@ -424,7 +427,7 @@ if (!isAdmin()) {
   }
 
   /**
-   * Uploads the result: replaces the file of that name on the NAS, or adds a new one. `confirmed`: the batch
+   * Publishes the result: replaces the file of that name, or adds a new one. `confirmed`: the batch
    * asked once for all files. Resolves false when nothing was saved; rejects on errors (shown in the editor).
    */
   async function save(confirmed = false): Promise<boolean> {
@@ -434,19 +437,19 @@ if (!isAdmin()) {
     nameInput.value = name;
     showSaveLabel();
     if (!isValidFileName(name)) { saveStatus.replaceChildren(h('div', { class: 'notice error' }, 'Ungültiger Dateiname.')); return false; }
-    const existing = onNas(name);
+    const existing = findPublished(name);
     if (existing && !confirmed && !confirm(existing.original
-      ? `${name} auf dem NAS ersetzen?\n\nDie aktuelle Fassung wird überschrieben; die zuerst veröffentlichte bleibt in predigten/original/ erhalten.`
-      : `${name} auf dem NAS ersetzen?\n\nDie bisherige Fassung wird in predigten/original/ aufbewahrt.`)) return false;
+      ? `${name} ${inT} ersetzen?\n\nDie aktuelle Fassung wird überschrieben; die zuerst veröffentlichte bleibt ${KEPT} erhalten.`
+      : `${name} ${inT} ersetzen?\n\nDie bisherige Fassung wird ${KEPT} aufbewahrt.`)) return false;
     const bar = progressBar('Lade hoch …');
     saveStatus.replaceChildren(bar.el);
     saveBtn.disabled = true;
     try {
-      const progress = (p: number) => bar.set(p, 'Lade hoch …');
-      await (existing ? replaceUpload(name, r.blob, progress) : uploadFile('/api/upload', r.blob, name, progress)).promise;
+      const progress = (p: number, stored?: boolean) => bar.set(p, stored ? `Wird in ${T} gespeichert …` : 'Lade hoch …');
+      await (existing ? replaceUpload(name, r.blob, progress) : uploadFile(r.blob, name, progress)).promise;
       st.uploadedAs = name;
-      saveStatus.replaceChildren(h('div', { class: 'notice ok' }, existing ? `Ersetzt: ${name}` : `Hochgeladen: ${name}`));
-      if ('local' in l.src) Object.assign(l.src.local, { state: 'done', status: existing ? `✓ ersetzt: ${name}` : `✓ hochgeladen: ${name}` });
+      saveStatus.replaceChildren(h('div', { class: 'notice ok' }, existing ? `Ersetzt: ${name}` : `Veröffentlicht: ${name}`));
+      if ('local' in l.src) Object.assign(l.src.local, { state: 'done', status: existing ? `✓ ersetzt: ${name}` : `✓ veröffentlicht: ${name}` });
       await loadList();
       return true;
     } catch (e) {
@@ -464,12 +467,12 @@ if (!isAdmin()) {
     const targets = todo.map(l => l.target);
     const twice = [...new Set(targets.filter((t, i) => targets.indexOf(t) !== i))];
     if (twice.length) {
-      toast(`Mehrere Dateien ergäben denselben Namen auf dem NAS (${twice.join(', ')}). Bitte eine davon entfernen.`, 'error', 8000);
+      toast(`Mehrere Dateien ergäben denselben Namen (${twice.join(', ')}). Bitte eine davon entfernen.`, 'error', 8000);
       return;
     }
-    const clashes = targets.filter(t => onNas(t));
-    if (clashes.length && !confirm(`${clashes.length === 1 ? 'Diese Datei gibt' : `Diese ${clashes.length} Dateien gibt`} es schon auf dem NAS – sie werden ersetzt:\n\n` +
-      `${clashes.join('\n')}\n\nDie zuerst veröffentlichte Fassung bleibt jeweils in predigten/original/ erhalten.`)) return;
+    const clashes = targets.filter(t => findPublished(t));
+    if (clashes.length && !confirm(`${clashes.length === 1 ? 'Diese Datei gibt' : `Diese ${clashes.length} Dateien gibt`} es schon ${inT} – sie werden ersetzt:\n\n` +
+      `${clashes.join('\n')}\n\nDie zuerst veröffentlichte Fassung bleibt jeweils ${KEPT} erhalten.`)) return;
     if (st.rendered && !st.uploadedAs && !confirm('Das aktuelle Ergebnis wurde noch nicht gespeichert. Trotzdem starten?')) return;
 
     batch = { stop: false, at: 0, of: todo.length };
@@ -494,7 +497,7 @@ if (!isAdmin()) {
     batch = null;
     optionsSet.disabled = editorSet.disabled = false;
     renderLists();
-    toast(`${ok} von ${todo.length} Dateien hochgeladen${stopped ? ' – angehalten' : ''}.`, ok === todo.length ? 'ok' : 'error', 8000);
+    toast(`${ok} von ${todo.length} Dateien veröffentlicht${stopped ? ' – angehalten' : ''}.`, ok === todo.length ? 'ok' : 'error', 8000);
   }
 
   const editorSet = h('fieldset', { class: 'plain' },
@@ -515,9 +518,9 @@ if (!isAdmin()) {
       h('div', { class: 'card-head' }, h('h2', null, '1 · Predigten wählen')),
       h('p', { class: 'muted small' },
         'Bearbeitet schon veröffentlichte Predigten mit den aktuellen Einstellungen neu, z. B. mit der Hall- und Rauschreduzierung – ' +
-        'vom NAS oder vom Rechner, einzeln oder mehrere nacheinander. Titel, Prediger und Cover werden übernommen. ' +
-        'Beim Ersetzen bleibt die zuerst veröffentlichte Fassung in predigten/original/ erhalten.'),
-      h('h3', { class: 'files-head' }, 'Auf dem NAS'),
+        `aus ${T} oder vom Rechner, einzeln oder mehrere nacheinander. Titel, Prediger und Cover werden übernommen. ` +
+        `Beim Ersetzen bleibt die zuerst veröffentlichte Fassung ${KEPT} erhalten.`),
+      h('h3', { class: 'files-head' }, `Veröffentlicht (${T})`),
       h('div', { class: 'row list-tools' }, filter, h('button', { class: 'btn btn-sm btn-ghost', type: 'button', onclick: loadList }, '↻ Neu laden')),
       listBox,
       h('h3', { class: 'files-head' }, 'Vom Rechner'),

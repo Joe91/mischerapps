@@ -1,9 +1,9 @@
-// The HTTP API under /api: login, Termine, Einsatzplan, shared settings and MP3 upload.
+// The HTTP API under /api: login, Termine, Einsatzplan, shared settings and publishing MP3s (to OpenCloud, see sermon-store.ts).
 // Used by server/main.ts (production) and dev-server.ts (npm run dev / preview).
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { randomBytes } from 'node:crypto';
-import { createReadStream, mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { mkdir, open, readdir, rename, stat, unlink } from 'node:fs/promises';
+import { createReadStream, createWriteStream, mkdirSync, readFileSync, rmSync, writeFileSync, existsSync } from 'node:fs';
+import { open, rename, stat, unlink } from 'node:fs/promises';
 import { pipeline } from 'node:stream/promises';
 import { join } from 'node:path';
 import { OpError, isoDate, type Op } from '../apps/termine/src/model';
@@ -14,6 +14,7 @@ import { ROLES, type Role, type ServerConfig } from './config';
 import { PlanFormatError, PlanStore } from './plan-store';
 import { DamagedSettings, SharedSettings } from './shared-settings';
 import { InvalidSpreadsheet, TermineStore } from './termine-store';
+import { createStore, StoreError, type SermonStore } from './sermon-store';
 
 export class HttpError extends Error {
   constructor(public status: number, message: string) { super(message); }
@@ -21,7 +22,7 @@ export class HttpError extends Error {
 
 const COOKIE = 'mischer_session';
 const FILE_NAME = /^[A-Za-z0-9._-]{1,120}\.mp3$/;
-/** subfolder of predigten/ with the files as first published, before an admin replaced them */
+/** folder in dataDir with the files as first published, before an admin replaced them (a backup, not published) */
 const ORIGINALS = 'original';
 
 function secretFor(cfg: ServerConfig): string {
@@ -68,14 +69,19 @@ const sendText = (res: ServerResponse, status: number, text: string) =>
 const log = (msg: string) => console.log(`${new Date().toISOString()} ${msg}`);
 
 /** Returns a handler for /api/*: resolves to false if the request is not for the API. */
-export function createApi(cfg: ServerConfig) {
+export function createApi(cfg: ServerConfig, store: SermonStore = createStore(cfg.cloud, cfg.dataDir)) {
   const secret = secretFor(cfg);
   const termine = new TermineStore(cfg.dataDir);
   const shared = new SharedSettings(cfg.dataDir);
   const plan = new PlanStore(cfg.dataDir);
   const limiter = new LoginLimiter();
   const maxUpload = cfg.maxUploadMb * 1024 * 1024;
-  const predigten = join(cfg.dataDir, 'predigten');
+  const originals = join(cfg.dataDir, ORIGINALS);
+  // uploads arrive here before they go to the store (same disk as predigten/ for the local store)
+  const incoming = join(cfg.dataDir, 'tmp');
+  rmSync(incoming, { recursive: true, force: true }); // left over from an interrupted upload
+  mkdirSync(incoming, { recursive: true });
+  const tmpFile = () => join(incoming, `${randomBytes(8).toString('hex')}.mp3`);
 
   const clientIp = (req: IncomingMessage) => {
     // behind the NAS reverse proxy: the last entry was added by the proxy itself
@@ -107,43 +113,53 @@ export function createApi(cfg: ServerConfig) {
     limiter.reset(ip);
     log(`login ${role} from ${ip}`);
     const maxAge = cfg.sessionDays * 86400;
-    sendJson(res, 200, { user: role, role }, { 'Set-Cookie': cookieHeader(req, signSession(secret, role, cfg.users[role], Date.now() + maxAge * 1000), maxAge) });
+    sendJson(res, 200, { user: role, role, target: store.label }, { 'Set-Cookie': cookieHeader(req, signSession(secret, role, cfg.users[role], Date.now() + maxAge * 1000), maxAge) });
   }
 
   /**
-   * POST /api/upload?name=<file>.mp3 with the MP3 as the body (Content-Type audio/mpeg). Written to disk while
-   * it arrives, so the server never holds the file in memory. Never overwrites an existing file.
+   * POST /api/upload?name=<file>.mp3 with the MP3 as the body (Content-Type audio/mpeg): publishes it. The body is
+   * written to disk while it arrives (the server never holds the file in memory), then passed to the store.
+   * Never overwrites an existing file.
    */
   async function upload(req: IncomingMessage, res: ServerResponse) {
     const name = new URL(req.url ?? '', 'http://x').searchParams.get('name') ?? '';
     if (!FILE_NAME.test(name)) throw new HttpError(400, 'bad name');
-    const size = await receiveMp3(req, join(predigten, name));
-    log(`upload ${name} (${Math.round(size / 1024)} kB)`);
+    if (await store.exists(name)) throw new HttpError(409, 'exists'); // before receiving megabytes in vain
+    const tmp = tmpFile();
+    const size = await receiveMp3(req, tmp);
+    await store.write(name, tmp, false);
+    log(`published ${name} to ${store.label} (${Math.round(size / 1024)} kB)`);
     sendJson(res, 200, { ok: true, file: name });
   }
 
   /**
-   * PUT /api/uploads/<file>.mp3 (admin): replaces a published file with a reprocessed one. The first
-   * replacement keeps the file as published in predigten/original/, later ones overwrite only the current file.
+   * PUT /api/uploads/<file>.mp3 (admin): replaces a published file with a reprocessed one. Before the first
+   * replacement the server keeps the file as published in dataDir/original/; later ones only overwrite.
    */
   async function replace(req: IncomingMessage, res: ServerResponse, name: string) {
-    const target = join(predigten, name);
-    if (!existsSync(target)) throw new HttpError(404, 'not found');
-    const tmp = join(predigten, `.${name}.${randomBytes(4).toString('hex')}.tmp`);
+    if (!(await store.exists(name))) throw new HttpError(404, 'not found');
+    const tmp = tmpFile();
     const size = await receiveMp3(req, tmp);
-    const original = join(predigten, ORIGINALS, name);
     try {
-      if (!existsSync(original)) {
-        await mkdir(join(predigten, ORIGINALS), { recursive: true });
-        await rename(target, original);
-      }
-      await rename(tmp, target);
+      await keepOriginal(name);
     } catch (e) {
       await unlink(tmp).catch(() => undefined);
       throw e;
     }
-    log(`replaced ${name} (${Math.round(size / 1024)} kB)`);
+    await store.write(name, tmp, true);
+    log(`replaced ${name} in ${store.label} (${Math.round(size / 1024)} kB)`);
     sendJson(res, 200, { ok: true, file: name });
+  }
+
+  async function keepOriginal(name: string) {
+    const target = join(originals, name);
+    if (existsSync(target)) return;
+    const current = await store.read(name);
+    if (!current) throw new HttpError(404, 'not found');
+    mkdirSync(originals, { recursive: true });
+    const tmp = tmpFile();
+    await pipeline(current.body, createWriteStream(tmp));
+    await rename(tmp, target);
   }
 
   /** Streams the request body to `target` (a new file); checks type and size first. */
@@ -173,10 +189,7 @@ export function createApi(cfg: ServerConfig) {
     const isFrame = head[0] === 0xff && (head[1] & 0xe0) === 0xe0;
     if (head.length < 3 || (!isId3 && !isFrame)) throw new HttpError(415, 'not mp3');
 
-    await mkdir(predigten, { recursive: true });
-    const out = await open(target, 'wx').catch(e => { // 'wx': never overwrite
-      throw (e as NodeJS.ErrnoException).code === 'EEXIST' ? new HttpError(409, 'exists') : e;
-    });
+    const out = await open(target, 'wx');
     let size = 0;
     async function* chunks() {
       for (let chunk: Buffer | undefined = head; chunk; ) {
@@ -200,15 +213,20 @@ export function createApi(cfg: ServerConfig) {
   /** GET /api/uploads/<file>.mp3 (admin), with ?original=1 the file as first published (see replace). */
   async function sendUpload(req: IncomingMessage, res: ServerResponse, name: string) {
     const original = new URL(req.url ?? '', 'http://x').searchParams.get('original') === '1';
-    const file = original ? join(predigten, ORIGINALS, name) : join(predigten, name);
-    const s = await stat(file).catch(() => null);
-    if (!s?.isFile()) throw new HttpError(404, 'not found');
+    let file: { size: number; body: NodeJS.ReadableStream } | null;
+    if (original) {
+      const s = await stat(join(originals, name)).catch(() => null);
+      file = s?.isFile() ? { size: s.size, body: createReadStream(join(originals, name)) } : null;
+    } else {
+      file = await store.read(name);
+    }
+    if (!file) throw new HttpError(404, 'not found');
     res.statusCode = 200;
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Content-Type', 'audio/mpeg');
-    res.setHeader('Content-Length', String(s.size));
+    if (file.size) res.setHeader('Content-Length', String(file.size));
     res.setHeader('Content-Disposition', `attachment; filename="${original ? name.replace(/\.mp3$/, '-original.mp3') : name}"`);
-    await pipeline(createReadStream(file), res);
+    await pipeline(file.body, res);
   }
 
   async function route(req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
@@ -229,7 +247,8 @@ export function createApi(cfg: ServerConfig) {
     if (!role) throw new HttpError(401, 'unauthorized');
     const admin = () => { if (role !== 'admin') throw new HttpError(403, 'forbidden'); };
 
-    if (path === '/api/me' && method === 'GET') return sendJson(res, 200, { user: role, role });
+    // `target`: where uploads are published ("OpenCloud", or "NAS" without cloud configuration)
+    if (path === '/api/me' && method === 'GET') return sendJson(res, 200, { user: role, role, target: store.label });
 
     if (path === '/api/termine' && method === 'GET') {
       const { data, skipped } = await termine.read();
@@ -295,11 +314,8 @@ export function createApi(cfg: ServerConfig) {
     if (path === '/api/upload' && post) return upload(req, res);
     if (path === '/api/uploads' && method === 'GET') {
       admin();
-      const names = (await readdir(predigten).catch(() => [])).filter(n => FILE_NAME.test(n)).sort().reverse();
-      return sendJson(res, 200, await Promise.all(names.map(async name => {
-        const s = await stat(join(predigten, name));
-        return { name, size: s.size, modified: s.mtime.toISOString(), original: existsSync(join(predigten, ORIGINALS, name)) };
-      })));
+      const files = (await store.list()).filter(f => FILE_NAME.test(f.name)).sort((a, b) => b.name.localeCompare(a.name));
+      return sendJson(res, 200, files.map(f => ({ ...f, original: existsSync(join(originals, f.name)) })));
     }
     const uploadMatch = /^\/api\/uploads\/([^/]+)$/.exec(path);
     if (uploadMatch) {
@@ -322,6 +338,10 @@ export function createApi(cfg: ServerConfig) {
     } catch (e) {
       if (res.headersSent) { res.end(); return true; }
       if (e instanceof HttpError) sendText(res, e.status, e.message);
+      else if (e instanceof StoreError) {
+        if (e.status === 502) console.error(`${store.label}: ${e.message}`);
+        sendText(res, e.status, e.message);
+      }
       else if (e instanceof OpError) sendText(res, 400, e.message);
       else if (e instanceof PlanFormatError) { console.error(`einsatzplan.xlsx: ${e.message}`); sendText(res, 500, 'einsatzplan.xlsx is damaged'); }
       else if (e instanceof DamagedSettings) { console.error(e.message); sendText(res, 500, 'settings.json is damaged'); }

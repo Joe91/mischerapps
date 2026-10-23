@@ -5,11 +5,13 @@
 import { h } from '../ui-kit/dom';
 
 export type Role = 'admin' | 'mischer';
-export interface Session { user: string; role: Role; }
+/** `target`: where the server publishes uploads – "OpenCloud" (or "NAS" without cloud configuration) */
+export interface Session { user: string; role: Role; target?: string; }
 
 let current: Session | null = null;
 export const session = () => current;
 export const isAdmin = () => current?.role === 'admin';
+export const publishTarget = () => current?.target ?? 'NAS';
 
 async function fetchSession(): Promise<Session | null> {
   const res = await fetch('/api/me', { cache: 'no-store' });

@@ -2,5 +2,10 @@
   "users": {
     "admin": { "password": "CHANGE-ME" },
     "mischer": { "password": "CHANGE-ME" }
+  },
+  "cloud": {
+    "url": "CHANGE-ME: WebDAV-Adresse des Ordners in OpenCloud, https://…/dav/spaces/…/",
+    "user": "CHANGE-ME: OpenCloud-Benutzername",
+    "token": "CHANGE-ME: App-Token"
   }
 }

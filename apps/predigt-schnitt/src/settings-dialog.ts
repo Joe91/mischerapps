@@ -2,11 +2,11 @@ import { DENOISE_ATTEN_DB } from '../../../packages/denoise/denoise';
 import { h, download, toast } from '../../../packages/ui-kit/dom';
 import type { Ctx } from './context';
 import {
-  CLOUD_KINDS, EXPORT_PRESETS, LOUDNESS_PRESETS, SOUND_OPTIONS, UPLOAD_KINDS, newId, normalizeSettings, profileKind, settingsStore, stripTokens,
-  type ExportPresetId, type LoudnessPresetId, type Settings, type SoundOption, type UploadKind, type UploadProfile,
+  EXPORT_PRESETS, LOUDNESS_PRESETS, SOUND_OPTIONS, normalizeSettings, settingsStore,
+  type ExportPresetId, type LoudnessPresetId, type Settings, type SoundOption,
 } from './settings';
 
-/** Settings dialog (admin only). Edits a copy; "Speichern" stores it here and, for the shared part, on the server. */
+/** Settings dialog (admin only). Edits a copy; "Speichern" stores it here and on the server, where it applies to everybody. */
 export function openSettings(ctx: Ctx, onSaved?: () => void) {
   const draft: Settings = structuredClone(ctx.settings);
   const dlg = h('dialog', { class: 'settings' });
@@ -35,48 +35,6 @@ export function openSettings(ctx: Ctx, onSaved?: () => void) {
   };
   const group = (title: string, ...children: Node[]) => h('div', { class: 'adv-group' }, h('h4', null, title), ...children);
 
-  // ---- upload profiles ----
-  const profileList = h('div', { class: 'profiles' });
-  function renderProfiles() {
-    profileList.replaceChildren(...draft.profiles.map(p => profileRow(p)),
-      draft.profiles.length ? '' : h('p', { class: 'muted' }, 'Kein Ziel.'));
-  }
-  function profileRow(p: UploadProfile) {
-    if (profileKind(p) === 'server') {
-      const serverRadio = h('input', { type: 'radio', name: 'active-profile', checked: draft.activeProfileId === p.id, title: 'Standard-Ziel' });
-      serverRadio.addEventListener('change', () => { draft.activeProfileId = p.id; });
-      return h('div', { class: 'profile' },
-        h('strong', null, UPLOAD_KINDS.server.label),
-        h('p', { class: 'muted small' }, 'Die fertige MP3 wird auf dem NAS gespeichert (Ordner „predigten“ im Datenverzeichnis der App).'),
-        h('div', { class: 'profile-actions' }, h('label', { class: 'check', title: 'Als Standard verwenden' }, serverRadio, 'Standard-Ziel')),
-      );
-    }
-    const token = h('input', { type: 'password', value: p.token, autocomplete: 'off', spellcheck: 'false' });
-    token.addEventListener('input', () => { p.token = token.value; });
-    const show = h('button', { class: 'btn btn-sm btn-ghost', type: 'button', onclick: () => { token.type = token.type === 'password' ? 'text' : 'password'; } }, '👁');
-    const radio = h('input', { type: 'radio', name: 'active-profile', checked: draft.activeProfileId === p.id, title: 'Standard-Ziel' });
-    radio.addEventListener('change', () => { draft.activeProfileId = p.id; });
-    const k = UPLOAD_KINDS[profileKind(p)];
-    const kind = select('Art', CLOUD_KINDS, () => profileKind(p), v => { p.kind = v as UploadKind; renderProfiles(); });
-    return h('div', { class: 'profile' },
-      kind,
-      text('Name', () => p.name, v => { p.name = v; }, { placeholder: 'z. B. Predigten-Ordner' }),
-      text(k.url, () => p.url, v => { p.url = v.trim(); }, { placeholder: k.urlHint, type: 'url' }),
-      h('label', null, k.secret, h('div', { class: 'row nowrap' }, token, show)),
-      h('div', { class: 'profile-actions' },
-        h('label', { class: 'check', title: 'Als Standard verwenden' }, radio, 'Standard-Ziel'),
-        h('button', {
-          class: 'btn btn-sm btn-danger', type: 'button', onclick: () => {
-            draft.profiles = draft.profiles.filter(x => x !== p);
-            if (draft.activeProfileId === p.id) draft.activeProfileId = draft.profiles[0]?.id ?? '';
-            renderProfiles();
-          },
-        }, 'Entfernen'),
-      ),
-    );
-  }
-  renderProfiles();
-
   // ---- cover image ----
   const coverPreview = h('img', { class: 'cover-preview', alt: '' });
   const coverInput = h('input', { type: 'file', accept: 'image/jpeg,image/png' });
@@ -92,17 +50,12 @@ export function openSettings(ctx: Ctx, onSaved?: () => void) {
   showCover();
 
   // ---- import / export ----
-  const withTokens = h('input', { type: 'checkbox' });
   const importInput = h('input', { type: 'file', accept: 'application/json,.json', class: 'hidden' });
   importInput.addEventListener('change', async () => {
     const f = importInput.files?.[0];
     if (!f) return;
     try {
       const imported = normalizeSettings(settingsStore.importJson(await f.text()));
-      // keep existing tokens where the import has none
-      for (const p of imported.profiles) {
-        if (!p.token) p.token = draft.profiles.find(x => x.id === p.id || x.url === p.url)?.token ?? '';
-      }
       Object.assign(ctx.settings, imported);
       ctx.saveSettings();
       dlg.close();
@@ -126,21 +79,6 @@ export function openSettings(ctx: Ctx, onSaved?: () => void) {
   syncSound();
 
   const body = h('div', { class: 'dlg-body' },
-    h('fieldset', null, h('legend', null, 'Upload-Ziele'),
-      h('p', { class: 'muted small' }, 'Normalerweise geht der Upload auf dieses NAS. Zusätzlich lässt sich ein Cloud-Ordner eintragen: ' +
-        'In OpenCloud bzw. Nextcloud den Ordner per öffentlichem Link mit Upload-Recht teilen und Link + Passwort hier eintragen ' +
-        '(die Cloud muss Zugriffe von dieser Adresse erlauben, siehe README). Zusätzliche Ziele gelten nur in diesem Browser. ' +
-        'Die übrigen Einstellungen auf dieser Seite gelten für alle.'),
-      profileList,
-      h('button', {
-        class: 'btn btn-sm', type: 'button', onclick: () => {
-          const p: UploadProfile = { id: newId(), name: '', kind: 'opencloud', url: '', token: '' };
-          draft.profiles.push(p);
-          if (!draft.activeProfileId) draft.activeProfileId = p.id;
-          renderProfiles();
-        },
-      }, '+ Ziel hinzufügen'),
-    ),
     h('fieldset', null, h('legend', null, 'Voreinstellungen'),
       h('p', { class: 'muted small' }, 'Diese Werte werden nach dem Schnitt automatisch angewendet. Im Export lassen sie sich über „Erweitert“ ' +
         'für eine einzelne Aufnahme ändern (ohne die Voreinstellung zu verändern).'),
@@ -183,11 +121,10 @@ export function openSettings(ctx: Ctx, onSaved?: () => void) {
       h('div', { class: 'row' },
         h('button', {
           class: 'btn btn-sm', type: 'button', onclick: () => {
-            const json = settingsStore.exportJson(draft, withTokens.checked ? undefined : stripTokens);
+            const json = settingsStore.exportJson(draft);
             download(new Blob([json], { type: 'application/json' }), 'predigt-schnitt-einstellungen.json');
           },
         }, 'Als JSON exportieren'),
-        h('label', { class: 'check' }, withTokens, 'Token mit exportieren'),
         h('span', { class: 'spacer' }),
         h('button', { class: 'btn btn-sm', type: 'button', onclick: () => importInput.click() }, 'JSON importieren …'),
         importInput,

@@ -3,17 +3,17 @@
 Apps unter einer Startseite, betrieben auf dem eigenen NAS (ein Docker-Container: Web-App + kleiner Server):
 
 - **Predigt-Schnitt** (`apps/predigt-schnitt/`) – Browser-App, die eine Gottesdienst-Aufnahme (MP3) lädt, die Predigt
-  automatisch erkennt, die Lautheit normalisiert, als MP3 exportiert und auf das NAS hochlädt.
-  Alles läuft im Browser; das Audio verlässt den Rechner erst beim Upload.
+  automatisch erkennt, die Lautheit normalisiert, als MP3 exportiert und veröffentlicht: Der Server legt sie im gemeinsamen
+  Ordner in OpenCloud ab ([OpenCloud](#opencloud-der-ordner-für-die-predigten)). Alles läuft im Browser; das Audio verlässt
+  den Rechner erst beim Upload.
   Umsetzung von [Planung_Predigt-Schnitt-WebApp.md](Planung_Predigt-Schnitt-WebApp.md).
 - **Termine** (`apps/termine/`) – Liste der kommenden Sonntage; jede Person sagt mit ihrem Kürzel (z. B. `JD`)
   Ja / Vielleicht / Nein. Alle sehen, wer was geantwortet hat und wer noch offen ist. Der Admin trägt pro Termin
   Anlass, Uhrzeit, Einteilung und Hinweise ein; sagt eine eingeteilte Person ab, wird das markiert.
   Alles steht in einer Excel-Datei auf dem NAS ([Termine](#termine)).
-- **Predigt nachbearbeiten** (`apps/predigt-nachbearbeiten/`, nur Admin) – eine schon veröffentlichte Predigt vom NAS
+- **Predigt nachbearbeiten** (`apps/predigt-nachbearbeiten/`, nur Admin) – eine schon veröffentlichte Predigt aus OpenCloud
   oder vom Rechner (auch mehrere nacheinander) noch einmal mit den aktuellen Einstellungen bearbeiten (z. B. Hall & Rauschen
-  reduzieren) und auf dem NAS ersetzen
-  ([Nachbearbeiten](#predigt-nachbearbeiten-nur-admin)).
+  reduzieren) und in OpenCloud ersetzen ([Nachbearbeiten](#predigt-nachbearbeiten-nur-admin)).
 
 ## Benutzer
 
@@ -22,8 +22,8 @@ die nicht im Repository liegt ([Konfiguration](#konfiguration)).
 
 | Benutzer | Darf |
 | --- | --- |
-| `mischer` | Termine ansehen und beantworten · Aufnahmen schneiden und aufs NAS hochladen. Keine Einstellungen. |
-| `admin` | alles von `mischer` · Termine anlegen und bearbeiten · veröffentlichte Predigten nachbearbeiten und ersetzen · Excel-Tabelle herunter-/hochladen · Einstellungen (Lautheit, Export, Namensschema, Cover, Anzahl Sonntage, zusätzliche Upload-Ziele) |
+| `mischer` | Termine ansehen und beantworten · Aufnahmen schneiden und veröffentlichen. Keine Einstellungen. |
+| `admin` | alles von `mischer` · Termine anlegen und bearbeiten · veröffentlichte Predigten nachbearbeiten und ersetzen · Excel-Tabelle herunter-/hochladen · Einstellungen (Lautheit, Export, Namensschema, Cover, Anzahl Sonntage) |
 
 Die Einstellungen des Admins gelten für alle (sie liegen auf dem Server, `settings.json`). Die Oberfläche blendet für
 `mischer` alles Weitere aus; der Server prüft jede Anfrage selbst. Falsche Passwörter bremsen den Zugang
@@ -35,8 +35,9 @@ Voraussetzung: Docker (Synology: Container Manager bzw. Portainer) und ein Rever
 Die App muss unter der **Wurzel einer Adresse** laufen (eigene Subdomain, kein Unterpfad).
 
 1. **Ordner anlegen:** `/volume1/docker/mischer/config/` und `/volume1/docker/mischer/data/`.
-2. **Konfiguration:** `config.example.json` als `/volume1/docker/mischer/config/config.json` ablegen und die beiden Passwörter eintragen
-   (siehe [Konfiguration](#konfiguration)). Solange dort `CHANGE-ME` steht, startet der Container nicht.
+2. **Konfiguration:** `config.example.json` als `/volume1/docker/mischer/config/config.json` ablegen, die beiden Passwörter und den
+   Zugang zu OpenCloud eintragen (siehe [Konfiguration](#konfiguration) und [OpenCloud](#opencloud-der-ordner-für-die-predigten)).
+   Solange dort `CHANGE-ME` steht, startet der Container nicht.
 3. **Container bauen und starten** – mit [docker-compose.yml](docker-compose.yml) aus diesem Repository:
    - *Portainer:* Stacks → Add stack → **Repository** → `https://github.com/Joe91/mischerapps`, Compose-Pfad `docker-compose.yml`,
      Deploy. Portainer baut das Image auf dem NAS.
@@ -59,14 +60,16 @@ data/termine.xlsx          Termine und Antworten (Excel, auch von Hand bearbeitb
 data/termine.backup.xlsx   Stand vor dem letzten Hochladen einer Tabelle
 data/einsatzplan.xlsx      Einsatzplan (Mischer, Beamer, Musikteam), so wie der Admin ihn hochgeladen hat
 data/settings.json         gemeinsame Einstellungen (vom Admin)
-data/predigten/            hochgeladene MP3-Dateien
-data/predigten/original/   die zuerst veröffentlichte Fassung nachbearbeiteter Predigten
+data/original/             die zuerst veröffentlichte Fassung nachbearbeiteter Predigten (Sicherung, nicht veröffentlicht)
+data/tmp/                  Uploads, während sie ankommen (wird beim Start geleert)
 data/.session-secret       Schlüssel für die Anmelde-Cookies (wird automatisch angelegt)
 ```
 
+Die veröffentlichten Predigten liegen nicht hier, sondern im Ordner in OpenCloud (nur ohne `cloud` in der Konfiguration, z. B. beim
+Entwickeln, in `data/predigten/`).
+
 Auf dem NAS ist das `/volume1/docker/mischer/data/` (File Station: `docker` → `mischer` → `data`). Die Dateien entstehen erst bei Bedarf:
-`termine.xlsx` bei der ersten Änderung an den Terminen, `settings.json` beim ersten Speichern der Einstellungen, `predigten/` beim ersten
-Upload. Dateien mit Punkt am Anfang (`.session-secret`) zeigt File Station nur an, wenn „Versteckte Dateien anzeigen“ aktiv ist.
+`termine.xlsx` bei der ersten Änderung an den Terminen, `settings.json` beim ersten Speichern der Einstellungen. Dateien mit Punkt am Anfang (`.session-secret`) zeigt File Station nur an, wenn „Versteckte Dateien anzeigen“ aktiv ist.
 
 ### Gut zu wissen
 
@@ -85,8 +88,8 @@ Upload. Dateien mit Punkt am Anfang (`.session-secret`) zeigt File Station nur a
   `config.json` geändert wird (Container neu starten).
 - **Safari (iPad/iPhone)** löscht lokal gespeicherte Daten von Webseiten nach etwa 7 Tagen ohne Nutzung: Das Kürzel muss dann neu
   eingetragen werden; die Anmeldung selbst bleibt (sie liegt im Server-Cookie).
-- **Upload-Größe:** Der Server hält eine Datei beim Hochladen im Speicher (etwa das Vierfache der Dateigröße, 30 MB ≈ 120 MB RAM).
-  Grenze: `maxUploadMb` (Standard 150).
+- **Upload-Größe:** Der Server schreibt eine Datei beim Hochladen gleich auf die Platte (`data/tmp/`) und reicht sie dann an OpenCloud
+  weiter. Grenze: `maxUploadMb` (Standard 150).
 - **`termine.xlsx` am NAS direkt bearbeiten** geht, aber wer genau dann antwortet, wenn die Datei gespeichert wird, kann überschrieben
   werden. Sicherer: in der App herunterladen, bearbeiten, wieder hochladen.
 - Baut Portainer das Image nicht (Fehler „image not found“): auf dem NAS per SSH im geklonten Ordner `docker compose up -d --build`.
@@ -103,6 +106,11 @@ Upload. Dateien mit Punkt am Anfang (`.session-secret`) zeigt File Station nur a
   "users": {
     "admin":   { "password": "…" },
     "mischer": { "password": "…" }
+  },
+  "cloud": {
+    "url":   "https://cloud.example.org/remote.php/dav/spaces/…/",
+    "user":  "…",
+    "token": "…"
   }
 }
 ```
@@ -111,6 +119,8 @@ Upload. Dateien mit Punkt am Anfang (`.session-secret`) zeigt File Station nur a
 - Statt Klartext geht auch ein Hash: `npm run hash-password -- 'mein passwort'` (oder im Container
   `node dist-server/hash-password.mjs 'mein passwort'`) und die Ausgabe (`scrypt$…`) als Passwort eintragen.
 - Nach einer Änderung den Container neu starten; alle Anmeldungen des geänderten Benutzers werden dabei ungültig.
+- `cloud`: der Ordner in OpenCloud, in dem die Predigten veröffentlicht werden (siehe [OpenCloud](#opencloud-der-ordner-für-die-predigten)).
+  Ohne diesen Abschnitt speichert der Server sie in `data/predigten/` (zum Entwickeln und Testen).
 - Optional: `"sessionDays": 30`, `"maxUploadMb": 150`, `"secureCookies": true`, `"sessionSecret": "…"` (mind. 16 Zeichen).
 - Der Pfad der Datei kann über die Umgebungsvariable `CONFIG_FILE` geändert werden (Standard `/config/config.json`);
   weitere Variablen: `DATA_DIR` (`/data`), `STATIC_DIR` (`/app/dist`), `PORT` (`8080`).
@@ -173,22 +183,26 @@ npm run preview      # dist/ lokal ausliefern (http://localhost:4173)
 
 `npm run dev` und `npm run preview` enthalten dieselbe API wie der echte Server, mit festen Test-Anmeldungen
 `admin` / `admin` und `mischer` / `mischer`. Daten (Termine, Uploads, Einstellungen) liegen in `uploads-dev/`
-(zum Zurücksetzen löschen; der Ordner ist in `.gitignore`).
+(zum Zurücksetzen löschen; der Ordner ist in `.gitignore`), veröffentlichte Predigten in `uploads-dev/predigten/`.
+Mit einer OpenCloud zum Testen: `scripts/cloud-testserver.sh` startet eine in Docker, eingerichtet wie die echte (ein für einen
+zweiten Benutzer freigegebener Ordner, App-Token), und gibt den Aufruf `CLOUD_URL=… CLOUD_USER=… CLOUD_TOKEN=… npm run dev` aus.
 
 Den echten Server samt Image lokal ausprobieren:
 
 ```sh
 docker build -t mischer-app .
 mkdir -p /tmp/mischer/config /tmp/mischer/data && chmod 777 /tmp/mischer/data
-cp config.example.json /tmp/mischer/config/config.json     # Passwörter eintragen!
+cp config.example.json /tmp/mischer/config/config.json     # Passwörter eintragen, „cloud“ ausfüllen oder löschen!
 docker run --rm -p 9120:8080 -v /tmp/mischer/config:/config:ro -v /tmp/mischer/data:/data mischer-app
 ```
 
 Die API (alle unter `/api`, Anmeldung per Cookie): `POST login` / `logout`, `GET me`, `GET`/`POST termine`,
-`GET termine/export` und `POST termine/import` (Admin), `GET plan` (auch ohne Anmeldung, dann gekürzt) und `POST plan/import` (Admin, die xlsx als Body), `GET`/`PUT settings/<app>` (PUT: Admin), `POST upload?name=<datei>.mp3` (die MP3 als Body, `Content-Type: audio/mpeg`; wird direkt auf die Platte geschrieben),
-`GET uploads` (Admin; je Datei `original: true`, wenn sie schon ersetzt wurde), `GET uploads/<datei>.mp3` (Admin, mit `?original=1` die zuerst
-veröffentlichte Fassung), `PUT uploads/<datei>.mp3` (Admin: ersetzt eine vorhandene Datei, die MP3 als Body), `GET health`. Fehlercodes des Uploads: `401` nicht angemeldet, `400` ungültiger Name, `409` Datei existiert schon,
-`413` zu groß, `415` keine MP3.
+`GET termine/export` und `POST termine/import` (Admin), `GET plan` (auch ohne Anmeldung, dann gekürzt) und `POST plan/import` (Admin, die xlsx als Body), `GET`/`PUT settings/<app>` (PUT: Admin), `POST upload?name=<datei>.mp3` (veröffentlicht die MP3 aus dem Body, `Content-Type: audio/mpeg`),
+`GET uploads` (Admin: die veröffentlichten Dateien; je Datei `original: true`, wenn sie schon ersetzt wurde), `GET uploads/<datei>.mp3` (Admin, mit `?original=1` die zuerst
+veröffentlichte Fassung), `PUT uploads/<datei>.mp3` (Admin: ersetzt eine veröffentlichte Datei, die MP3 als Body), `GET health`. `GET me` und `POST login`
+nennen in `target` das Ziel (`OpenCloud`, ohne Konfiguration `NAS`). Fehlercodes des Uploads: `401` nicht angemeldet, `400` ungültiger Name,
+`409` Datei existiert schon, `413` zu groß, `415` keine MP3, `502` OpenCloud hat abgelehnt (Text: `cloud 401` Token falsch/abgelaufen,
+`cloud 404` Ordner fehlt, `cloud unreachable` …).
 
 ## Ablauf in der App
 
@@ -219,8 +233,8 @@ veröffentlichte Fassung), `PUT uploads/<datei>.mp3` (Admin: ersetzt eine vorhan
    Das Ergebnis wird für Messung und Kodierung wiederverwendet; ändern sich nur Lautheit oder Kompression, wird
    nicht neu gefiltert. Ist die Option an, startet der Filter schon im Schnitt-Schritt im Hintergrund (Vorschlag
    ± 30 s); Marker innerhalb dieses Bereichs zu verschieben braucht keinen neuen Durchgang.
-4. **Upload** – auf das NAS (Ordner `predigten` im Datenverzeichnis), mit Fortschritt; alternativ Herunterladen.
-   Vorhandene Dateien werden nie überschrieben. Der Admin kann zusätzlich einen Cloud-Ordner als Ziel eintragen.
+4. **Upload** – veröffentlicht die Datei: Der Server legt sie im Ordner in OpenCloud ab, mit Fortschritt; alternativ Herunterladen.
+   Vorhandene Dateien werden nie überschrieben.
 
 ## Predigt nachbearbeiten (nur Admin)
 
@@ -228,47 +242,55 @@ Für Predigten, die schon veröffentlicht sind, z. B. ältere Aufnahmen von vor 
 Die Kachel sieht nur der Admin; der Server lässt nur ihn zu.
 
 1. **Predigten wählen** – zwei Quellen:
-   - *Auf dem NAS:* Liste aller Dateien in `data/predigten/` (Suche nach Namensteil, z. B. `2606`), *Bearbeiten* lädt eine davon,
+   - *Veröffentlicht:* Liste aller Dateien im Ordner in OpenCloud (Suche nach Namensteil, z. B. `2606`), *Bearbeiten* lädt eine davon,
      *⬇* lädt sie herunter (bei nachbearbeiteten auch *⬇ erste Fassung*, als `…-original.mp3`).
    - *Vom Rechner:* MP3-Dateien hineinziehen oder auswählen, auch mehrere auf einmal. Jede einzeln *Bearbeiten* oder
-     **Alle nacheinander bearbeiten und hochladen**: Die Dateien laufen dann ohne weiteres Zutun mit den Einstellungen aus
-     Schritt 2 durch und landen auf dem NAS (Status je Datei in der Liste, *Nach dieser Datei anhalten* möglich).
-     Der Name auf dem NAS ist der Dateiname, bereinigt (`predigt-eag-261018(1).mp3` → `predigt-eag-261018-1.mp3`).
+     **Alle nacheinander bearbeiten und veröffentlichen**: Die Dateien laufen dann ohne weiteres Zutun mit den Einstellungen aus
+     Schritt 2 durch und landen in OpenCloud (Status je Datei in der Liste, *Nach dieser Datei anhalten* möglich).
+     Veröffentlicht wird unter dem Dateinamen, bereinigt (`predigt-eag-261018(1).mp3` → `predigt-eag-261018-1.mp3`).
 2. **Bearbeitung** – Lautheit, Format, Ein-/Ausblenden, Hochpass, Kompression, Hall & Rauschen für alle Dateien auf der Seite.
    Voreingestellt sind die Standardwerte von Predigt-Schnitt (auch 0,5 s Ein- und Ausblenden); Änderungen gelten nur hier,
    die Standardwerte bleiben unverändert.
 3. **Datei** – die ganze Datei (kein Schnitt). Titel, Prediger/in, Album, Jahr, Kommentar und Cover werden aus der Datei
    übernommen und können geändert werden; hat der Admin ein Cover eingestellt, kann es das bisherige ersetzen. Hat eine Datei
-   vom Rechner keine Tags, kommen sie von der gleichnamigen Datei auf dem NAS. Die Berechnung startet sofort im Hintergrund
+   vom Rechner keine Tags, kommen sie von der gleichnamigen veröffentlichten Datei. Die Berechnung startet sofort im Hintergrund
    (15 min Predigt ≈ 45 s, 26 min ≈ 75 s auf einem 12-Kern-PC, mit Entrauschen). *MP3 erstellen*, vorher/nachher anhören, dann
-   hochladen oder herunterladen.
+   veröffentlichen oder herunterladen.
 
-**Ersetzen:** Liegt auf dem NAS schon eine Datei mit dem Namen, wird sie ersetzt (die App fragt vorher, beim Stapel einmal für alle);
-sonst kommt eine neue dazu. Beim ersten Ersetzen verschiebt der Server die bisherige Datei nach `data/predigten/original/`;
+**Ersetzen:** Gibt es in OpenCloud schon eine Datei mit dem Namen, wird sie ersetzt (die App fragt vorher, beim Stapel einmal für alle);
+sonst kommt eine neue dazu. Vor dem ersten Ersetzen sichert der Server die bisherige Datei auf dem NAS in `data/original/`;
 spätere Durchgänge überschreiben nur die aktuelle Fassung. Die Liste markiert solche Dateien mit „nachbearbeitet“, und ein
-erneutes Bearbeiten vom NAS startet von der ersten Fassung (nicht doppelt gefiltert); die aktuelle lässt sich per Knopf stattdessen laden.
-Zurück zur ersten Fassung: die Datei aus `original/` in File Station über die aktuelle kopieren.
+erneutes Bearbeiten startet von der ersten Fassung (nicht doppelt gefiltert); die aktuelle lässt sich per Knopf stattdessen laden.
+OpenCloud behält außerdem selbst die früheren Versionen (in OpenCloud: Datei → Details → Versionen). Zurück zur ersten Fassung:
+dort die Version wiederherstellen, oder *⬇ erste Fassung* herunterladen und in OpenCloud hochladen.
 
-## Zusätzliches Upload-Ziel: Cloud-Ordner (optional, nur Admin)
+## OpenCloud: der Ordner für die Predigten
 
-1. In der Cloud einen Ordner (z. B. „Predigten“) per **öffentlichem Link** teilen, Berechtigung
-   „Bearbeiten“/„Hochladen“ oder „Nur hochladen“ (Dateiablage), mit Passwort.
-2. In der App (als Admin): **Einstellungen → Upload-Ziele → + Ziel hinzufügen**, Art wählen, Freigabe-Link
-   (`https://cloud…/s/AbC123`) und Link-Passwort eintragen. Zusätzliche Ziele gelten nur in diesem Browser;
-   der „mischer“-Benutzer lädt immer auf das NAS.
-3. **Einmalig beim Cloud-Admin:** Die Cloud muss Uploads von der Adresse der App erlauben (CORS),
-   sonst blockiert der Browser („Cloud nicht erreichbar … CORS“):
-   - **OpenCloud:** Umgebungsvariable `OC_CORS_ALLOW_ORIGINS=https://mischer.jujo.myds.me` (mehrere mit Komma).
-   - **Nextcloud (Apache):** `server/cloud/nextcloud-apache-cors.conf` einbinden, Adresse eintragen,
-     Apache neu laden. Nextcloud ≥ 29 nötig. Bei gehosteten Nextclouds ohne Zugriff auf die
-     Server-Konfiguration geht es nicht – dann Herunterladen oder anderer Weg.
+Veröffentlicht wird in **einen gemeinsamen Ordner in OpenCloud**; er ist der einzige Ort der veröffentlichten Predigten, andere lesen
+dort mit. Der Server auf dem NAS schreibt hinein (WebDAV) – nicht der Browser, deshalb braucht es in OpenCloud keine Einstellungen
+eines Admins (CORS). Kopiert wird nur beim Veröffentlichen (Upload in Predigt-Schnitt, Speichern in Predigt nachbearbeiten),
+es gibt keinen Abgleich im Hintergrund. Was in OpenCloud gelöscht oder umbenannt wird, sieht die App sofort so.
 
-Verhalten: Vor dem Upload prüft die App, ob die Datei schon existiert (Meldung statt Überschreiben).
-Bei Nextcloud-„Dateiablage“-Links ist diese Prüfung nicht möglich; Nextcloud legt dann „… (2).mp3“ an.
-Falsche Passwörter zählen bei Nextcloud zum Brute-Force-Schutz (nach mehreren Fehlversuchen wird gebremst).
+Der Server meldet sich mit einem **App-Token** eines Benutzers an, der im Ordner schreiben darf (Anmeldung über ChurchTools
+geht für Programme nicht; ein App-Token ist ein Passwort nur für diesen Zweck):
 
-Lokal ausprobieren: `scripts/cloud-testserver.sh` startet eine OpenCloud in Docker
-(https://localhost:9200, Zertifikatswarnung einmal im Browser bestätigen) und gibt Link und Passwort aus.
+1. **App-Token:** In OpenCloud oben rechts → *Einstellungen* (Konto) → *App-Tokens* → *+ Neu*, Name z. B. „Mischer-App“, Ablaufdatum
+   wählen. Das Token (mehrere Wörter) wird nur einmal angezeigt – gleich kopieren. Achtung: Es gilt für das ganze Konto, nicht nur
+   für den Ordner; und es bleibt gültig, bis es abläuft oder gelöscht wird (auch wenn das Konto in ChurchTools gesperrt wird).
+   Vor dem Ablaufdatum ein neues anlegen und eintragen.
+2. **WebDAV-Adresse des Ordners:** In den Konto-Einstellungen *WebDAV-Informationen in der Detailansicht anzeigen* einschalten. Dann
+   den Ordner auswählen (bei einem freigegebenen Ordner unter *Mit mir geteilt*), die Details (ⓘ) öffnen und unter *WebDAV* die
+   Adresse kopieren (`https://…/dav/spaces/…`).
+3. **In `config.json` eintragen:** `"cloud": { "url": "<WebDAV-Adresse>", "user": "<OpenCloud-Benutzername>", "token": "<App-Token>" }`.
+4. **Prüfen**, am besten vor dem Neu-Deployen: `npm run cloud-check -- pfad/zur/config.json --write` (im Container:
+   `node dist-server/cloud-check.mjs --write`). Das listet den Ordner und lädt eine kleine Testdatei hoch und wieder weg.
+   Meldet es „Anmeldung abgelehnt (401)“, statt des Benutzernamens die Benutzer-ID (UUID) versuchen – bei Konten, die
+   OpenCloud beim ersten Anmelden über ChurchTools selbst anlegt, verlangt OpenCloud sie. Der Server prüft den Zugang auch bei
+   jedem Start und schreibt das Ergebnis ins Protokoll („OpenCloud erreichbar …“ oder den Fehler).
+
+Läuft das Token ab, scheitert das Veröffentlichen mit einer Meldung („App-Token vermutlich abgelaufen“); die Datei bleibt im Browser
+und lässt sich herunterladen. Dateien, die vorher in `data/predigten/` auf dem NAS lagen, werden nicht automatisch übertragen –
+bei Bedarf in Predigt nachbearbeiten über *Vom Rechner* veröffentlichen oder in OpenCloud hochladen.
 
 ## Erkennung prüfen und kalibrieren
 
@@ -295,14 +317,14 @@ apps/termine/                Termine (src/model.ts: Datenmodell, src/xlsx.ts: Ex
 packages/audio-core/         Decoder, Frame-Index, Merkmale, Erkennung, Lautheit, DSP, Pipeline, Worker
 packages/denoise/            Hall-/Rauschreduzierung: df3.wasm (DeepFilterNet3 mit Modell) und Wrapper;
                              wasm/ ist der Rust-Quelltext, neu bauen mit wasm/build.sh (nur nach Änderungen nötig)
-packages/upload/             Upload auf den Server und in Cloud-Ordner
+packages/upload/             Upload zum Server (der veröffentlicht)
 packages/settings/           localStorage-Store mit JSON-Export/-Import, gemeinsame Einstellungen vom Server
 packages/auth/               Anmeldung am Server (Rollen admin / mischer)
 packages/ui-kit/             DOM-Helfer, Styles
-server/                      Server: api.ts (Anmeldung, Termine, Einsatzplan, Einstellungen, Upload), static.ts, main.ts, config.ts, auth.ts
-server/cloud/                CORS-Vorlage für Nextcloud (nur für das optionale Cloud-Upload-Ziel)
+server/                      Server: api.ts (Anmeldung, Termine, Einsatzplan, Einstellungen, Upload), sermon-store.ts (OpenCloud per WebDAV),
+                             cloud-check.ts, static.ts, main.ts, config.ts, auth.ts
 Dockerfile, docker-compose.yml, config.example.json   Betrieb auf dem NAS
-scripts/                     bench.ts (Erkennungs-Benchmark), make-synthetic.py, cloud-testserver.sh
+scripts/                     bench.ts (Erkennungs-Benchmark), make-synthetic.py, cloud-testserver.sh (OpenCloud zum Testen)
 dev-server.ts                bindet die API in `npm run dev` / `preview` ein
 ```
 

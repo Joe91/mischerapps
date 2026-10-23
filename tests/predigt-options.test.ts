@@ -65,6 +65,12 @@ describe('stored settings', () => {
     expect(settingsStore.importJson(JSON.stringify({ settings: { rev: 4, denoiseDb: 12 } }))).toMatchObject({ denoiseDb: 18 });
   });
 
+  it('drop the upload targets the browser kept before (cloud links with passwords), also at the current revision', () => {
+    const stored = { rev: 5, highpass: false, activeProfileId: 'x', profiles: [{ id: 'x', kind: 'opencloud', url: 'https://c/s/a', token: 'secret' }] };
+    expect(upgradeStored(stored)).toEqual({ rev: 5, highpass: false });
+    expect(JSON.stringify(settingsStore.importJson(JSON.stringify({ settings: stored })))).not.toContain('secret');
+  });
+
   it('leave an empty server copy empty apart from the revision', () => {
     expect(upgradeStored({})).toEqual({ rev: 5 });
   });
