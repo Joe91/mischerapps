@@ -26,3 +26,6 @@ fieldset.plain { border: 0; padding: 0; margin: 0; min-width: 0; }
 .tag-mode { margin-top: 1rem; max-width: 34rem; }
 /* the card is titled "Bearbeitung" already; the panel's note stays */
 .options-set .advanced-head h3 { display: none; }
+.file-row .pick { width: 1.15rem; height: 1.15rem; }
+.list-batch { margin-left: auto; }
+.batch-bar { margin-top: .6rem; }

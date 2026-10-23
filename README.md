@@ -86,10 +86,13 @@ gelöscht werden. Dateien mit Punkt am Anfang (`.session-secret`) zeigt File Sta
   eingetragen werden; die Anmeldung selbst bleibt (sie liegt im Server-Cookie).
 - **Upload-Größe:** Der Server schreibt eine Datei beim Hochladen gleich auf die Platte (`data/tmp/`) und reicht sie dann an OpenCloud
   weiter. Grenze: `maxUploadMb` (Standard 150).
-- **Langsame Leitung zu OpenCloud:** Dauert das Weiterreichen länger als 20 s, antwortet der Server sofort („angekommen“) und erledigt
-  den Rest im Hintergrund; die Seite fragt alle 2 s nach, bis die Datei in OpenCloud ist (oder meldet den Fehler). So bricht der
-  Reverse-Proxy von DSM (60 s) nichts ab. Für einzelne Übertragungen gilt eine Grenze von 30 Minuten; Fehlschläge stehen im Protokoll
-  des Containers als „OpenCloud: <datei>: … (nach … s)“.
+- **Langsame oder wackelige Leitung zu OpenCloud:** Dateien ab 1 MB gehen in Stücken von 4 MB nach OpenCloud (TUS-Protokoll); ein
+  Stück, das scheitert oder 2 Minuten hängt, wird bis zu 5-mal neu geschickt – ab der Stelle, die OpenCloud schon hat. Dauert das
+  Weiterreichen länger als 20 s, antwortet der Server sofort („angekommen“) und erledigt den Rest im Hintergrund; die Seite zeigt
+  den Fortschritt („Wird in OpenCloud gespeichert … 45 %“), bis die Datei dort ist (oder meldet den Fehler). So bricht der Reverse-Proxy
+  von DSM (60 s) nichts ab. Beim Stapel geht es mit der nächsten Datei weiter, sobald der Server die vorige hat. Beim Ersetzen nimmt der
+  Server als Sicherung die Kopie, die beim Öffnen in *Predigt nachbearbeiten* durch ihn lief (wenn OpenCloud noch dieselbe Fassung hat) –
+  die Datei muss nicht noch einmal heruntergeladen werden. Fehlschläge stehen im Protokoll als „OpenCloud: <datei>: … (nach … s)“.
 - Baut Portainer das Image nicht (Fehler „image not found“): auf dem NAS per SSH im geklonten Ordner `docker compose up -d --build`.
 - Meldet Portainer beim Aktualisieren „pull access denied for mischer-app“: Das Image gibt es nur lokal, nicht bei Docker Hub. Die
   Compose-Datei hat deshalb keinen `image:`-Namen (dann überspringt der Pull-Schritt es); bei einem älteren Stand `image:` entfernen
@@ -286,7 +289,9 @@ Für Predigten, die schon veröffentlicht sind, z. B. ältere Aufnahmen von vor 
 Die Kachel sieht nur der Admin; der Server lässt nur ihn zu.
 
 1. **Predigten wählen** – zwei Quellen:
-   - *Veröffentlicht:* Liste aller Dateien im Ordner in OpenCloud (Suche nach Namensteil, z. B. `2606`), *Bearbeiten* lädt eine davon,
+   - *Veröffentlicht:* Liste aller Dateien im Ordner in OpenCloud (Suche nach Namensteil, z. B. `2606`), *Bearbeiten* lädt eine davon.
+     Mehrere ankreuzen (oder *Alle auswählen*) und **„… ausgewählte bearbeiten und ersetzen“**: Sie laufen nacheinander mit den
+     Einstellungen aus Schritt 2 durch und ersetzen die Dateien in OpenCloud (eine Rückfrage für alle; Status je Zeile);
      *⬇* lädt sie herunter (bei nachbearbeiteten auch *⬇ erste Fassung*, als `…-original.mp3`).
    - *Vom Rechner:* MP3-Dateien hineinziehen oder auswählen, auch mehrere auf einmal. Jede einzeln *Bearbeiten* oder
      **Alle nacheinander bearbeiten und veröffentlichen**: Die Dateien laufen dann ohne weiteres Zutun mit den Einstellungen aus

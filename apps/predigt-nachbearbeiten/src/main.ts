@@ -23,7 +23,11 @@ import { germanDate, reprocessTags, type TagMode } from '../../predigt-schnitt/s
 interface Published { name: string; size: number; modified: string; original: boolean; }
 
 /** A file picked on this computer; `target` is the name it is published under. */
-interface LocalFile { file: File; target: string; state: 'waiting' | 'running' | 'done' | 'error'; status: string; }
+type ItemState = 'waiting' | 'running' | 'done' | 'error';
+interface LocalFile { file: File; target: string; state: ItemState; status: string; }
+
+/** One file of a batch: where it comes from, the name it is published under, and how to show its state. */
+interface BatchItem { source: Source; target: string; set(state: ItemState, status: string): void; }
 
 type Source = { published: Published; fromOriginal: boolean } | { local: LocalFile };
 
@@ -131,7 +135,10 @@ if (!isAdmin()) {
   let loaded: Loaded | null = null;
   let busy = false, creating = false;
   /** several local files processed and uploaded in a row */
-  let batch: { stop: boolean; at: number; of: number } | null = null;
+  let batch: { stop: boolean; at: number; of: number; waiting: number } | null = null;
+  /** published files ticked for a batch, and how far it got with them */
+  const selected = new Set<string>();
+  const publishedState = new Map<string, { state: ItemState; status: string }>();
 
   const findPublished = (name: string) => published.find(f => f.name === name);
   /** where the files are published: "OpenCloud" (or "NAS" without cloud configuration) */
@@ -159,7 +166,24 @@ if (!isAdmin()) {
     renderLocal(); // marks local files that would replace a published one
   }
 
+  /** Selection of published files and the batch for it (next to the search). */
+  const tools = h('span', { class: 'row list-batch' });
+  function renderTools() {
+    for (const name of selected) if (!findPublished(name)) selected.delete(name); // gone from the folder
+    const shownNames = published.filter(f => f.name.toLowerCase().includes(filter.value.trim().toLowerCase())).map(f => f.name);
+    const all = shownNames.length > 0 && shownNames.every(n => selected.has(n));
+    tools.replaceChildren(
+      published.length ? h('button', {
+        class: 'btn btn-sm btn-ghost', type: 'button', disabled: !!batch,
+        onclick: () => { for (const n of shownNames) if (all) selected.delete(n); else selected.add(n); renderList(); },
+      }, all ? 'Auswahl aufheben' : 'Alle auswählen') : '',
+      selected.size ? h('button', { class: 'btn btn-sm btn-primary', type: 'button', disabled: busy || !!batch, onclick: () => void runPublishedBatch() },
+        `${selected.size} ausgewählte bearbeiten und ersetzen`) : '',
+    );
+  }
+
   function renderList() {
+    renderTools();
     const q = filter.value.trim().toLowerCase();
     const shown = published.filter(f => f.name.toLowerCase().includes(q));
     listBox.replaceChildren(
@@ -168,9 +192,14 @@ if (!isAdmin()) {
       published.length && !shown.length ? h('p', { class: 'muted' }, 'Keine Datei passt zur Suche.') : '',
       shown.length ? h('ul', { class: 'file-list' }, shown.map(f =>
         h('li', { class: `file-row${loaded && 'published' in loaded.src && loaded.target === f.name ? ' active' : ''}` },
+          h('input', {
+            type: 'checkbox', class: 'pick', checked: selected.has(f.name), disabled: !!batch, 'aria-label': `${f.name} auswählen`,
+            onchange: (e: Event) => { if ((e.target as HTMLInputElement).checked) selected.add(f.name); else selected.delete(f.name); renderTools(); },
+          }),
           h('span', { class: 'file-cell mono' }, f.name),
           f.original ? h('span', { class: 'badge', title: `Wurde schon ersetzt; die erste Fassung liegt ${KEPT}.` }, 'nachbearbeitet') : '',
           h('span', { class: 'muted small' }, `${new Date(f.modified).toLocaleDateString('de-DE')} · ${fmtBytes(f.size)}`),
+          publishedState.get(f.name) ? h('span', { class: `small local-status ${publishedState.get(f.name)!.state}` }, publishedState.get(f.name)!.status) : '',
           h('span', { class: 'row-buttons' },
             f.original ? h('a', {
               class: 'btn btn-sm btn-ghost', href: fileUrl(f.name, true), download: f.name.replace(/\.mp3$/, '-original.mp3'),
@@ -230,20 +259,28 @@ if (!isAdmin()) {
               disabled: !!batch, onclick: () => { locals.splice(locals.indexOf(l), 1); renderLocal(); },
             }, '✕')),
         ))) : '',
-      batch ? h('div', { class: 'actions' },
-        h('span', { class: 'muted small batch-status' }, `Datei ${batch.at} von ${batch.of} …`),
-        h('button', { class: 'btn', type: 'button', disabled: batch.stop, onclick: () => { if (batch) batch.stop = true; renderLocal(); } },
-          batch.stop ? 'Hält nach dieser Datei an …' : 'Nach dieser Datei anhalten'),
-      ) : locals.length ? h('div', { class: 'actions' },
+      batch ? '' : locals.length ? h('div', { class: 'actions' },
         done ? h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => { locals.splice(0, locals.length, ...locals.filter(l => l.state !== 'done')); renderLocal(); } },
           'Erledigte entfernen') : '',
-        todo ? h('button', { class: 'btn btn-primary', type: 'button', disabled: busy, onclick: runBatch },
+        todo ? h('button', { class: 'btn btn-primary', type: 'button', disabled: busy, onclick: () => void runLocalBatch() },
           todo === 1 ? 'Bearbeiten und veröffentlichen' : `Alle ${todo} nacheinander bearbeiten und veröffentlichen`) : '',
       ) : '',
     );
   }
 
-  function renderLists() { renderList(); renderLocal(); }
+  /** The running batch: which file, the files still on their way to OpenCloud, stop after this file. */
+  const batchBox = h('div');
+  function renderBatch() {
+    batchBox.replaceChildren(batch ? h('div', { class: 'actions batch-bar' },
+      h('span', { class: 'muted small batch-status' }, batch.at <= batch.of && !batch.stop
+        ? `Datei ${batch.at} von ${batch.of} …${batch.waiting ? ` · ${batch.waiting} wird/werden noch in ${T} gespeichert` : ''}`
+        : `Warte auf ${T} (${batch.waiting} Datei(en)) …`),
+      h('button', { class: 'btn', type: 'button', disabled: batch.stop, onclick: () => { if (batch) batch.stop = true; renderBatch(); } },
+        batch.stop ? 'Hält nach dieser Datei an …' : 'Nach dieser Datei anhalten'),
+    ) : '');
+  }
+
+  function renderLists() { renderList(); renderLocal(); renderBatch(); }
 
   /**
    * Loads a file into the editor and decodes it in the worker: a published one (by default its first version, so it
@@ -469,10 +506,11 @@ if (!isAdmin()) {
   }
 
   /**
-   * Publishes the result: replaces the file of that name, or adds a new one. `confirmed`: the batch
-   * asked once for all files. Resolves false when nothing was saved; rejects on errors (shown in the editor).
+   * Publishes the result: replaces the file of that name, or adds a new one. `confirmed`: the batch asked once
+   * for all files. `stored` (batch): returns as soon as the server has the file and reports later whether it
+   * arrived in OpenCloud – meanwhile the next file is processed. Resolves false when nothing was saved.
    */
-  async function save(confirmed = false): Promise<boolean> {
+  async function save(confirmed = false, stored?: (ok: boolean, message: string) => void): Promise<boolean> {
     const r = st.rendered, l = loaded;
     if (!r || !l) return false;
     const name = sanitizeFileName(nameInput.value);
@@ -487,8 +525,21 @@ if (!isAdmin()) {
     saveStatus.replaceChildren(bar.el);
     saveBtn.disabled = true;
     try {
-      const progress = (p: number, stored?: boolean) => bar.set(p, stored ? `Wird in ${T} gespeichert …` : 'Lade hoch …');
-      await (existing ? replaceUpload(name, r.blob, progress) : uploadFile(r.blob, name, progress)).promise;
+      const progress = (p: number, inCloud?: boolean) => bar.set(p, inCloud ? `Wird in ${T} gespeichert …` : 'Lade hoch …');
+      const up = existing ? replaceUpload(name, r.blob, progress) : uploadFile(r.blob, name, progress);
+      if (stored) {
+        await up.received;
+        st.uploadedAs = name;
+        const note = h('div', { class: 'notice ok' }, `Angekommen: ${name} – wird in ${T} gespeichert`);
+        saveStatus.replaceChildren(note);
+        // the editor may show this file still: tell it there too
+        const show = (cls: string, text: string) => { if (saveStatus.contains(note)) saveStatus.replaceChildren(h('div', { class: `notice ${cls}` }, text)); };
+        up.promise.then(
+          () => { show('ok', existing ? `Ersetzt: ${name}` : `Veröffentlicht: ${name}`); stored(true, existing ? `✓ ersetzt: ${name}` : `✓ veröffentlicht: ${name}`); },
+          e => { show('error', (e as Error).message); stored(false, `⚠ ${(e as Error).message}`); });
+        return true;
+      }
+      await up.promise;
       st.uploadedAs = name;
       saveStatus.replaceChildren(h('div', { class: 'notice ok' }, existing ? `Ersetzt: ${name}` : `Veröffentlicht: ${name}`));
       if ('local' in l.src) Object.assign(l.src.local, { state: 'done', status: existing ? `✓ ersetzt: ${name}` : `✓ veröffentlicht: ${name}` });
@@ -502,45 +553,73 @@ if (!isAdmin()) {
     }
   }
 
-  /** Processes the local files that are not done yet, one after another, with the options above, and uploads them. */
-  async function runBatch() {
-    if (batch || busy) return;
-    const todo = locals.filter(l => l.state !== 'done');
-    const targets = todo.map(l => l.target);
+  /**
+   * Processes the files one after another with the options above and publishes them (replacing files of the same
+   * name after one question). While OpenCloud still takes a file, the next one is already processed.
+   */
+  async function runBatch(items: BatchItem[]) {
+    if (batch || busy || !items.length) return;
+    const targets = items.map(i => i.target);
     const twice = [...new Set(targets.filter((t, i) => targets.indexOf(t) !== i))];
     if (twice.length) {
       toast(`Mehrere Dateien ergäben denselben Namen (${twice.join(', ')}). Bitte eine davon entfernen.`, 'error', 8000);
       return;
     }
     const clashes = targets.filter(t => findPublished(t));
-    if (clashes.length && !confirm(`${clashes.length === 1 ? 'Diese Datei gibt' : `Diese ${clashes.length} Dateien gibt`} es schon ${inT} – sie werden ersetzt:\n\n` +
+    if (clashes.length && !confirm(`${clashes.length === 1 ? 'Diese Datei wird' : `Diese ${clashes.length} Dateien werden`} ${inT} ersetzt:\n\n` +
       `${clashes.join('\n')}\n\nDie zuerst veröffentlichte Fassung bleibt jeweils ${KEPT} erhalten.`)) return;
     if (st.rendered && !st.uploadedAs && !confirm('Das aktuelle Ergebnis wurde noch nicht gespeichert. Trotzdem starten?')) return;
 
-    batch = { stop: false, at: 0, of: todo.length };
+    const run = batch = { stop: false, at: 0, of: items.length, waiting: 0 };
     optionsSet.disabled = editorSet.disabled = true;
     let ok = 0;
-    for (const l of todo) {
-      if (batch.stop) break;
-      batch.at++;
-      Object.assign(l, { state: 'running', status: 'wird bearbeitet …' });
-      renderLocal();
+    const pending: Promise<void>[] = [];
+    for (const item of items) {
+      if (run.stop) break;
+      run.at++;
+      item.set('running', 'wird bearbeitet …');
+      renderLists();
       try {
-        if (!await open({ local: l })) throw new Error('nicht geladen');
+        if (!await open(item.source)) throw new Error('nicht geladen');
         await create();
-        if (!await save(true)) throw new Error('nicht gespeichert');
-        ok++;
+        let report: (ok: boolean, message: string) => void = () => undefined;
+        const result = new Promise<void>(r => {
+          report = (good, message) => { item.set(good ? 'done' : 'error', message); if (good) ok++; run.waiting--; renderLists(); r(); };
+        });
+        if (!await save(true, report)) throw new Error('nicht gespeichert');
+        run.waiting++;
+        item.set('running', `wird in ${T} gespeichert …`);
+        pending.push(result);
       } catch (e) {
-        Object.assign(l, { state: 'error', status: `⚠ ${(e as Error).message}` });
+        item.set('error', `⚠ ${(e as Error).message}`);
       }
-      renderLocal();
+      renderLists();
     }
-    const stopped = batch.stop && batch.at < batch.of;
+    run.at = run.of + 1; // processing done; maybe still waiting for OpenCloud
+    renderBatch();
+    await Promise.all(pending);
+    const stopped = run.stop && pending.length < items.length;
     batch = null;
     optionsSet.disabled = editorSet.disabled = false;
+    await loadList();
     renderLists();
-    toast(`${ok} von ${todo.length} Dateien veröffentlicht${stopped ? ' – angehalten' : ''}.`, ok === todo.length ? 'ok' : 'error', 8000);
+    toast(`${ok} von ${items.length} Dateien ${clashes.length === items.length ? 'ersetzt' : 'veröffentlicht'}${stopped ? ' – angehalten' : ''}.`, ok === items.length ? 'ok' : 'error', 8000);
   }
+
+  /** The local files that are not done yet. */
+  const runLocalBatch = () => runBatch(locals.filter(l => l.state !== 'done').map(l => ({
+    source: { local: l }, target: l.target, set: (state, status) => Object.assign(l, { state, status }),
+  })));
+
+  /** The ticked published files: each is processed from its first version and replaced. */
+  const runPublishedBatch = () => {
+    const files = published.filter(f => selected.has(f.name));
+    for (const f of files) publishedState.set(f.name, { state: 'waiting', status: 'wartet' });
+    return runBatch(files.map(f => ({
+      source: { published: f, fromOriginal: f.original }, target: f.name,
+      set: (state, status) => { publishedState.set(f.name, { state, status }); if (state === 'done') selected.delete(f.name); },
+    })));
+  };
 
   const editorSet = h('fieldset', { class: 'plain' },
     source,
@@ -563,11 +642,12 @@ if (!isAdmin()) {
         `aus ${T} oder vom Rechner, einzeln oder mehrere nacheinander. Titel, Prediger und Cover werden übernommen. ` +
         `Beim Ersetzen bleibt die zuerst veröffentlichte Fassung ${KEPT} erhalten.`),
       h('h3', { class: 'files-head' }, `Veröffentlicht (${T})`),
-      h('div', { class: 'row list-tools' }, filter, h('button', { class: 'btn btn-sm btn-ghost', type: 'button', onclick: loadList }, '↻ Neu laden')),
+      h('div', { class: 'row list-tools' }, filter, h('button', { class: 'btn btn-sm btn-ghost', type: 'button', onclick: loadList }, '↻ Neu laden'), tools),
       listBox,
       h('h3', { class: 'files-head' }, 'Vom Rechner'),
       drop, localInput,
       localBox,
+      batchBox,
       loadStatus,
     ),
     h('section', { class: 'card' }, h('div', { class: 'card-head' }, h('h2', null, '2 · Bearbeitung')), optionsSet),

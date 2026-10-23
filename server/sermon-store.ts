@@ -24,13 +24,15 @@ export interface SermonStore {
   readonly label: string;
   list(): Promise<StoredFile[]>;
   exists(name: string): Promise<boolean>;
-  /** null if there is no such file */
-  read(name: string): Promise<{ size: number; body: Readable } | null>;
+  /** null if there is no such file; `version` tells versions apart (ETag in OpenCloud) */
+  read(name: string): Promise<{ size: number; body: Readable; version: string | null } | null>;
+  /** the file's current version (as in `read`), null if there is no such file */
+  version(name: string): Promise<string | null>;
   /**
    * Stores the local file `src` as `name` and removes `src`. `replace`: overwrites the existing file;
-   * otherwise refuses with StoreError 409 if the name is taken.
+   * otherwise refuses with StoreError 409 if the name is taken. `onProgress`: share sent so far (0–1).
    */
-  write(name: string, src: string, replace: boolean): Promise<void>;
+  write(name: string, src: string, replace: boolean, onProgress?: (share: number) => void): Promise<void>;
 }
 
 /** `status`: what the API answers – 409 name taken, 502 the cloud failed (`message` says how). */
@@ -71,13 +73,18 @@ export class LocalStore implements SermonStore {
 
   async read(name: string) {
     const s = await stat(join(this.dir, name)).catch(() => null);
-    return s?.isFile() ? { size: s.size, body: createReadStream(join(this.dir, name)) } : null;
+    return s?.isFile() ? { size: s.size, body: createReadStream(join(this.dir, name)), version: `${s.mtimeMs}-${s.size}` } : null;
   }
 
-  async write(name: string, src: string, replace: boolean) {
+  async version(name: string) {
+    const s = await stat(join(this.dir, name)).catch(() => null);
+    return s?.isFile() ? `${s.mtimeMs}-${s.size}` : null;
+  }
+
+  async write(name: string, src: string, replace: boolean, onProgress?: (share: number) => void) {
     await mkdir(this.dir, { recursive: true });
     const target = join(this.dir, name);
-    if (replace) { await rename(src, target); return; }
+    if (replace) { await rename(src, target); onProgress?.(1); return; }
     try {
       // a hard link fails if the name is taken, so two uploads of the same name cannot overwrite each other
       await link(src, target).catch(e => {
@@ -121,13 +128,13 @@ export class WebDav {
     this.auth = 'Basic ' + Buffer.from(`${cloud.user}:${cloud.token}`).toString('base64');
   }
 
-  /** Any answer from the cloud; unreachable → StoreError 502 "cloud unreachable". */
-  async request(method: string, url: string, init: RequestInit = {}): Promise<Response> {
+  /** Any answer from the cloud; unreachable → StoreError 502 "cloud unreachable". `timeoutMs`: for the whole exchange. */
+  async request(method: string, url: string, init: RequestInit = {}, timeoutMs = method === 'PUT' || method === 'GET' ? 30 * 60_000 : 60_000): Promise<Response> {
     try {
       return await this.fetchImpl(url, {
         ...init, method, redirect: 'manual',
         headers: { Authorization: this.auth, ...init.headers as Record<string, string> },
-        signal: AbortSignal.timeout(method === 'PUT' || method === 'GET' ? 30 * 60_000 : 60_000),
+        signal: AbortSignal.timeout(timeoutMs),
       });
     } catch (e) {
       const cause = (e as { cause?: { code?: string } }).cause?.code;
@@ -151,7 +158,7 @@ export class WebDavStore implements SermonStore {
   }
 
   private url(name = '') { return this.cloud.url + encodeURIComponent(name); }
-  private request(method: string, url: string, init?: RequestInit) { return this.dav.request(method, url, init); }
+  private request(method: string, url: string, init?: RequestInit, timeoutMs?: number) { return this.dav.request(method, url, init, timeoutMs); }
   private failed(res: Response) { return this.dav.failed(res); }
 
   async list() {
@@ -173,19 +180,87 @@ export class WebDavStore implements SermonStore {
     const res = await this.request('GET', this.url(name));
     if (res.status === 404) { res.body?.cancel().catch(() => undefined); return null; }
     if (!res.ok || !res.body) throw this.failed(res);
-    return { size: Number(res.headers.get('content-length')) || 0, body: Readable.fromWeb(res.body as import('node:stream/web').ReadableStream) };
+    return {
+      size: Number(res.headers.get('content-length')) || 0, version: res.headers.get('etag'),
+      body: Readable.fromWeb(res.body as import('node:stream/web').ReadableStream),
+    };
   }
 
-  async write(name: string, src: string, replace: boolean) {
+  async version(name: string) {
+    const res = await this.request('HEAD', this.url(name));
+    if (res.status === 404) return null;
+    if (!res.ok) throw this.failed(res);
+    return res.headers.get('etag');
+  }
+
+  async write(name: string, src: string, replace: boolean, onProgress?: (share: number) => void) {
     try {
       // OpenCloud ignores "If-None-Match: *" on PUT, so the check comes first (the window in between is short)
       if (!replace && await this.exists(name)) throw new StoreError(409, 'exists');
+      const { size } = await stat(src);
+      if (size >= TUS_FROM && await this.tus(name, src, size, onProgress)) return;
       const res = await this.request('PUT', this.url(name), {
         headers: { 'Content-Type': 'audio/mpeg' }, body: await openAsBlob(src),
       });
       if (res.status !== 201 && res.status !== 204) throw this.failed(res);
+      onProgress?.(1);
     } finally {
       await unlink(src).catch(() => undefined);
     }
   }
+
+  /**
+   * Uploads in pieces with the TUS protocol (OpenCloud supports it): each piece is a short request, a piece that
+   * fails or hangs is sent again from where the server stands. A slow or interrupted line costs time, not the
+   * upload. Resolves false if the server does not offer TUS (then one PUT is used).
+   */
+  private async tus(name: string, src: string, size: number, onProgress?: (share: number) => void): Promise<boolean> {
+    const tus = { 'Tus-Resumable': '1.0.0' };
+    const create = await this.request('POST', this.url(), {
+      headers: { ...tus, 'Upload-Length': String(size), 'Upload-Metadata': `filename ${Buffer.from(name).toString('base64')}`, 'Content-Length': '0' },
+    });
+    const location = create.headers.get('location');
+    if (create.status !== 201 || !location) {
+      if (create.status === 405 || create.status === 412 || create.status === 501) { create.body?.cancel().catch(() => undefined); return false; }
+      throw this.failed(create);
+    }
+    create.body?.cancel().catch(() => undefined);
+    const upload = new URL(location, this.cloud.url).href;
+    const file = await openAsBlob(src);
+    let offset = 0, failures = 0;
+    while (offset < size) {
+      const end = Math.min(offset + TUS_PIECE, size);
+      try {
+        const res = await this.request('PATCH', upload, {
+          headers: { ...tus, 'Upload-Offset': String(offset), 'Content-Type': 'application/offset+octet-stream' }, body: file.slice(offset, end),
+        }, PIECE_TIMEOUT);
+        res.body?.cancel().catch(() => undefined);
+        if (res.status === 204) {
+          offset = Number(res.headers.get('upload-offset')) || end;
+          failures = 0;
+          onProgress?.(offset / size);
+          continue;
+        }
+        // 409: the server stands elsewhere; 5xx: try again – anything else (401, 404 expired …) is final
+        if (res.status !== 409 && res.status < 500) throw this.failed(res);
+      } catch (e) {
+        if (!(e instanceof StoreError && e.message.startsWith('cloud unreachable'))) throw e;
+      }
+      if (++failures > PIECE_RETRIES) throw new StoreError(502, `cloud unreachable (Upload hängt bei ${Math.round(offset / size * 100)} %)`);
+      await new Promise(r => setTimeout(r, failures * RETRY_PAUSE_MS));
+      // a piece may have arrived although its answer did not: ask where the upload stands
+      const head = await this.request('HEAD', upload, { headers: tus }).catch(() => null);
+      head?.body?.cancel().catch(() => undefined);
+      const at = Number(head?.headers.get('upload-offset'));
+      if (head?.ok && Number.isFinite(at)) offset = at;
+    }
+    return true;
+  }
 }
+
+/** Files from this size go up in pieces (TUS); a piece is sent again if it takes longer than PIECE_TIMEOUT. */
+const TUS_FROM = 1024 * 1024;
+const TUS_PIECE = 4 * 1024 * 1024;
+const PIECE_TIMEOUT = 2 * 60_000;
+const PIECE_RETRIES = 5;
+const RETRY_PAUSE_MS = 2000;

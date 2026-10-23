@@ -88,19 +88,21 @@ export function createApi(cfg: ServerConfig, store: SermonStore = createStore(cf
   rmSync(incoming, { recursive: true, force: true }); // left over from an interrupted upload
   mkdirSync(incoming, { recursive: true });
   const tmpFile = () => join(incoming, `${randomBytes(8).toString('hex')}.mp3`);
+  /** published files as the admin opened them, with their version: the backup before replacing (see keepOriginal) */
+  const opened = join(incoming, 'opened');
 
   /** Uploads still being passed on to OpenCloud after the request was answered (GET /api/jobs/<id>). */
-  interface Job { state: 'running' | 'done' | 'failed'; file: string; status?: number; error?: string; ended?: number; }
+  interface Job { state: 'running' | 'done' | 'failed'; file: string; progress: number; status?: number; error?: string; ended?: number; }
   const jobs = new Map<string, Job>();
 
   /**
    * Runs `task` (passing an upload on to the store) and answers as soon as it is done – or, if it takes longer
    * than `syncWaitMs`, at once with 202 and a job id: the browser then asks until it is done.
    */
-  async function finish(res: ServerResponse, name: string, task: Promise<void>) {
-    const job: Job = { state: 'running', file: name };
+  async function finish(res: ServerResponse, name: string, run: (progress: (share: number) => void) => Promise<void>) {
+    const job: Job = { state: 'running', file: name, progress: 0 };
     const started = Date.now();
-    const done = task.then(() => { job.state = 'done'; }, e => {
+    const done = run(share => { job.progress = share; }).then(() => { job.state = 'done'; }, e => {
       const known = e instanceof HttpError || e instanceof StoreError;
       Object.assign(job, { state: 'failed', status: known ? e.status : 500, error: known ? e.message : 'server error' });
       if (!known) console.error(e);
@@ -162,10 +164,10 @@ export function createApi(cfg: ServerConfig, store: SermonStore = createStore(cf
     const tmp = tmpFile();
     const size = await receiveMp3(req, tmp);
     const started = Date.now();
-    return finish(res, name, (async () => {
-      await store.write(name, tmp, false);
+    return finish(res, name, async progress => {
+      await store.write(name, tmp, false, progress);
       log(`published ${name} to ${store.label} (${Math.round(size / 1024)} kB, ${Math.round((Date.now() - started) / 1000)} s)`);
-    })());
+    });
   }
 
   /**
@@ -177,28 +179,42 @@ export function createApi(cfg: ServerConfig, store: SermonStore = createStore(cf
     const tmp = tmpFile();
     const size = await receiveMp3(req, tmp);
     const started = Date.now();
-    return finish(res, name, (async () => {
+    return finish(res, name, async progress => {
       try {
-        await keepOriginal(name);
-        log(`kept the first version of ${name} (${Math.round((Date.now() - started) / 1000)} s)`);
+        const how = await keepOriginal(name);
+        if (how !== 'kept') log(`kept the first version of ${name} (${how === 'opened' ? 'as opened' : 'downloaded'}, ${Math.round((Date.now() - started) / 1000)} s)`);
       } catch (e) {
         await unlink(tmp).catch(() => undefined);
         throw e;
       }
-      await store.write(name, tmp, true);
+      await store.write(name, tmp, true, progress);
       log(`replaced ${name} in ${store.label} (${Math.round(size / 1024)} kB, ${Math.round((Date.now() - started) / 1000)} s)`);
-    })());
+    });
   }
 
-  async function keepOriginal(name: string) {
+  /**
+   * The first version of a published file before it is replaced: "kept" already, taken from the copy made when the
+   * admin opened it ("opened" – if OpenCloud still has that version), or downloaded once more.
+   */
+  async function keepOriginal(name: string): Promise<'kept' | 'opened' | 'downloaded'> {
     const target = join(originals, name);
-    if (existsSync(target)) return;
+    if (existsSync(target)) return 'kept';
+    mkdirSync(originals, { recursive: true });
+    const copy = join(opened, name);
+    if (existsSync(copy)) {
+      const seen = readFileSync(`${copy}.version`, 'utf8');
+      if (seen && seen === await store.version(name)) {
+        await rename(copy, target);
+        await unlink(`${copy}.version`).catch(() => undefined);
+        return 'opened';
+      }
+    }
     const current = await store.read(name);
     if (!current) throw new HttpError(404, 'not found');
-    mkdirSync(originals, { recursive: true });
     const tmp = tmpFile();
     await pipeline(current.body, createWriteStream(tmp));
     await rename(tmp, target);
+    return 'downloaded';
   }
 
   /** Streams the request body to `target` (a new file); checks type and size first. */
@@ -252,7 +268,7 @@ export function createApi(cfg: ServerConfig, store: SermonStore = createStore(cf
   /** GET /api/uploads/<file>.mp3 (admin), with ?original=1 the file as first published (see replace). */
   async function sendUpload(req: IncomingMessage, res: ServerResponse, name: string) {
     const original = new URL(req.url ?? '', 'http://x').searchParams.get('original') === '1';
-    let file: { size: number; body: NodeJS.ReadableStream } | null;
+    let file: { size: number; body: NodeJS.ReadableStream; version?: string | null } | null;
     if (original) {
       const s = await stat(join(originals, name)).catch(() => null);
       file = s?.isFile() ? { size: s.size, body: createReadStream(join(originals, name)) } : null;
@@ -265,7 +281,27 @@ export function createApi(cfg: ServerConfig, store: SermonStore = createStore(cf
     res.setHeader('Content-Type', 'audio/mpeg');
     if (file.size) res.setHeader('Content-Length', String(file.size));
     res.setHeader('Content-Disposition', `attachment; filename="${original ? name.replace(/\.mp3$/, '-original.mp3') : name}"`);
-    await pipeline(file.body, res);
+    // not replaced yet: keep a copy as it passes through – replacing it then needs no second download (keepOriginal)
+    const keep = !original && file.version && !existsSync(join(originals, name)) ? tmpFile() : null;
+    let copied: Promise<unknown> | null = null;
+    if (keep) {
+      const out = createWriteStream(keep);
+      copied = new Promise<void>((ok, fail) => { out.on('finish', () => ok()); out.on('error', fail); });
+      file.body.pipe(out);
+    }
+    try {
+      await pipeline(file.body, res);
+      if (keep) {
+        await copied;
+        if (!file.size || (await stat(keep)).size === file.size) {
+          mkdirSync(opened, { recursive: true });
+          await rename(keep, join(opened, name));
+          writeFileSync(join(opened, `${name}.version`), file.version!);
+        }
+      }
+    } finally {
+      if (keep) await unlink(keep).catch(() => undefined);
+    }
   }
 
   async function route(req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
@@ -364,7 +400,7 @@ export function createApi(cfg: ServerConfig, store: SermonStore = createStore(cf
     if (jobMatch && method === 'GET') {
       const job = jobs.get(jobMatch[1]);
       if (!job) throw new HttpError(404, 'unknown job');
-      return sendJson(res, 200, { state: job.state, file: job.file, status: job.status ?? null, error: job.error ?? null });
+      return sendJson(res, 200, { state: job.state, file: job.file, progress: job.progress, status: job.status ?? null, error: job.error ?? null });
     }
     // is a sermon of this name published already? (for everybody: the export warns before the work is done)
     if (path === '/api/published' && method === 'GET') {

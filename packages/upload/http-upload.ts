@@ -38,10 +38,16 @@ function describeCloudError(b: string): string {
 }
 
 /**
- * Progress of an upload; `stored`: the file has reached the server, which is now passing it on to OpenCloud
- * (the answer comes when it is stored there).
+ * Progress of an upload; `stored`: the file has reached the server, which is now passing it on to OpenCloud –
+ * `p` is then the share that has arrived there.
  */
 export type UploadProgress = (p: number, stored?: boolean) => void;
+
+/**
+ * `promise`: the file is stored (in OpenCloud); `received`: the server has it – a batch can go on with the next
+ * file meanwhile. Both reject with the reason if it fails.
+ */
+export interface Upload { promise: Promise<string>; received: Promise<void>; abort: () => void; }
 
 /** Whether a sermon of this name is published already (null if the server cannot tell just now). */
 export async function isPublished(name: string): Promise<boolean | null> {
@@ -62,7 +68,7 @@ export const replaceUpload = (name: string, file: Blob, onProgress: UploadProgre
   send('PUT', `/api/uploads/${encodeURIComponent(name)}`, file, onProgress);
 
 /** Asks every 2 s how a job of the server is doing (see server/api.ts, finish); short network gaps are no failure. */
-async function waitForJob(id: string): Promise<void> {
+async function waitForJob(id: string, onProgress: UploadProgress): Promise<void> {
   for (let failures = 0; ;) {
     await new Promise(r => setTimeout(r, 2000));
     let res: Response;
@@ -77,16 +83,18 @@ async function waitForJob(id: string): Promise<void> {
       if (++failures > 30) throw new UploadError(res.status, await res.text().catch(() => ''));
       continue;
     }
-    const job = await res.json() as { state: string; status: number | null; error: string | null };
+    const job = await res.json() as { state: string; progress: number; status: number | null; error: string | null };
     if (job.state === 'done') return;
+    onProgress(job.progress, true);
     if (job.state === 'failed') throw new UploadError(job.status ?? 500, job.error ?? '');
     failures = 0;
   }
 }
 
-function send(method: 'POST' | 'PUT', url: string, file: Blob,
-  onProgress: UploadProgress): { promise: Promise<string>; abort: () => void } {
+function send(method: 'POST' | 'PUT', url: string, file: Blob, onProgress: UploadProgress): Upload {
   const xhr = new XMLHttpRequest(); // XHR, because fetch has no upload progress
+  let arrived: () => void = () => undefined;
+  const received = new Promise<void>(r => { arrived = r; });
   const promise = new Promise<string>((resolve, reject) => {
     xhr.open(method, url);
     xhr.setRequestHeader('Content-Type', 'audio/mpeg');
@@ -94,13 +102,20 @@ function send(method: 'POST' | 'PUT', url: string, file: Blob,
     xhr.upload.onload = () => onProgress(1, true);
     xhr.onload = () => {
       // 202: the server is still passing the file on to OpenCloud; ask until it is done
-      if (xhr.status === 202) { waitForJob(JSON.parse(xhr.responseText).job).then(() => resolve(xhr.responseText), reject); return; }
-      if (xhr.status >= 200 && xhr.status < 300) resolve(xhr.responseText);
+      if (xhr.status === 202) {
+        arrived();
+        waitForJob(JSON.parse(xhr.responseText).job, onProgress).then(() => resolve(xhr.responseText), reject);
+        return;
+      }
+      if (xhr.status >= 200 && xhr.status < 300) { arrived(); resolve(xhr.responseText); }
       else reject(new UploadError(xhr.status, xhr.responseText));
     };
     xhr.onerror = () => reject(new UploadError(0, ''));
     xhr.onabort = () => reject(new Error('Upload abgebrochen.'));
     xhr.send(file); // the bare file: the server writes it to disk as it arrives
   });
-  return { promise, abort: () => xhr.abort() };
+  // a failure before the server has the file rejects `received` too (handled here: most callers only wait for `promise`)
+  const got = Promise.race([received, promise.then(() => undefined)]);
+  got.catch(() => undefined);
+  return { promise, received: got, abort: () => xhr.abort() };
 }

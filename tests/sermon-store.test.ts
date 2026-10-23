@@ -32,14 +32,42 @@ describe('parseMultistatus', () => {
 function fakeCloud(user: string, token: string) {
   const files = new Map<string, Buffer>();
   const puts: string[] = [];
+  const gets: string[] = [];
+  /** TUS uploads in progress; `breakPiece`: the next PATCH loses its answer (the piece arrives, the reply does not) */
+  const uploads = new Map<string, { name: string; length: number; data: Buffer }>();
+  const tus = { patches: 0, breakPiece: false };
+  const version = (n: string) => `"${files.get(n)?.length}-${puts.filter(p => p === n).length}"`;
   const auth = 'Basic ' + Buffer.from(`${user}:${token}`).toString('base64');
   const body = async (req: IncomingMessage) => { const c: Buffer[] = []; for await (const x of req) c.push(x as Buffer); return Buffer.concat(c); };
   const server = createServer(async (req, res) => {
     if (req.headers.authorization !== auth) { res.statusCode = 401; res.end(); return; }
+    const up = /^\/data\/(\w+)$/.exec(req.url ?? '');
+    if (up) { // TUS: HEAD tells the offset, PATCH appends a piece
+      const u = uploads.get(up[1]);
+      if (!u) { res.statusCode = 404; res.end(); return; }
+      if (req.method === 'HEAD') { res.setHeader('Upload-Offset', u.data.length); res.end(); return; }
+      const piece = await body(req);
+      tus.patches++;
+      if (Number(req.headers['upload-offset']) !== u.data.length) { res.statusCode = 409; res.end(); return; }
+      u.data = Buffer.concat([u.data, piece]);
+      if (u.data.length === u.length) { files.set(u.name, u.data); puts.push(u.name); uploads.delete(up[1]); }
+      if (tus.breakPiece) { tus.breakPiece = false; req.socket.destroy(); return; }
+      res.statusCode = 204;
+      res.setHeader('Upload-Offset', u.data.length);
+      res.end();
+      return;
+    }
     const m = /^\/dav\/spaces\/share\/(.*)$/.exec(req.url ?? '');
     if (!m) { res.statusCode = 404; res.end(); return; }
     const name = decodeURIComponent(m[1]);
-    if (req.method === 'PROPFIND') {
+    if (req.method === 'POST' && name === '') { // TUS: create an upload in the folder
+      const meta = /filename (\S+)/.exec(String(req.headers['upload-metadata']))?.[1] ?? '';
+      const id = Math.random().toString(36).slice(2);
+      uploads.set(id, { name: Buffer.from(meta, 'base64').toString(), length: Number(req.headers['upload-length']), data: Buffer.alloc(0) });
+      res.statusCode = 201;
+      res.setHeader('Location', `/data/${id}`);
+      res.end();
+    } else if (req.method === 'PROPFIND') {
       await body(req);
       res.statusCode = 207;
       res.end('<d:multistatus xmlns:d="DAV:"><d:response><d:href>/dav/spaces/share/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop><d:status>HTTP/1.1 200 OK</d:status></d:propstat></d:response>' +
@@ -48,8 +76,9 @@ function fakeCloud(user: string, token: string) {
         '</d:multistatus>');
     } else if (req.method === 'HEAD' || req.method === 'GET') {
       const f = files.get(name);
+      if (req.method === 'GET') gets.push(name);
       res.statusCode = f ? 200 : 404;
-      if (f) res.setHeader('Content-Length', f.length);
+      if (f) { res.setHeader('Content-Length', f.length); res.setHeader('ETag', version(name)); }
       res.end(req.method === 'GET' ? f : undefined);
     } else if (req.method === 'PUT') {
       const existed = files.has(name);
@@ -59,7 +88,7 @@ function fakeCloud(user: string, token: string) {
       res.end();
     } else { res.statusCode = 405; res.end(); }
   });
-  return { server, files, puts };
+  return { server, files, puts, gets, tus };
 }
 
 describe('WebDavStore and the API with OpenCloud', () => {
@@ -101,6 +130,21 @@ describe('WebDavStore and the API with OpenCloud', () => {
     expect(await store.read('missing.mp3')).toBeNull();
   });
 
+  it('sends large files in pieces (TUS) and goes on where the server stands after a lost answer', async () => {
+    const big = Buffer.alloc(9 * 1024 * 1024 + 17);
+    for (let i = 0; i < big.length; i++) big[i] = (i * 31) & 0xff;
+    const src = join(dir, 'big.mp3');
+    await writeFile(src, big);
+    const shares: number[] = [];
+    cloud.tus.breakPiece = true; // the first piece arrives, its answer is lost
+    const before = cloud.tus.patches;
+    await store.write('big.mp3', src, false, p => shares.push(p));
+    expect(cloud.files.get('big.mp3')?.equals(big)).toBe(true);
+    expect(cloud.tus.patches - before).toBe(3); // 4 + 4 + 1 MB, none sent twice
+    expect(shares.at(-1)).toBe(1);
+    await expect(readFile(src)).rejects.toThrow();
+  });
+
   it('reports a wrong token and an unreachable cloud', async () => {
     const wrong = new WebDavStore({ url: folder, user: 'jo', token: 'expired' });
     await expect(wrong.list()).rejects.toEqual(new StoreError(502, 'cloud 401'));
@@ -122,7 +166,11 @@ describe('WebDavStore and the API with OpenCloud', () => {
     expect((await send('POST', '/api/upload?name=predigt-eag-261018.mp3', 'ID3 again')).status).toBe(409);
     expect(cloud.puts.length).toBe(puts); // refused before anything was sent to the cloud
 
+    // the admin opens the file (it passes through the server): replacing it then needs no second download
+    expect(await (await fetch(`${base}/api/uploads/predigt-eag-261018.mp3`, { headers: { Cookie: cookie } })).text()).toBe('ID3 v1');
+    const gets = cloud.gets.length;
     expect((await send('PUT', '/api/uploads/predigt-eag-261018.mp3', 'ID3 v2')).status).toBe(200);
+    expect(cloud.gets.length).toBe(gets);
     expect((await send('PUT', '/api/uploads/predigt-eag-261018.mp3', 'ID3 v3')).status).toBe(200);
     expect(cloud.files.get('predigt-eag-261018.mp3')?.toString()).toBe('ID3 v3');
     expect(await readFile(join(dir, 'data/original/predigt-eag-261018.mp3'), 'latin1')).toBe('ID3 v1');
@@ -131,7 +179,8 @@ describe('WebDavStore and the API with OpenCloud', () => {
     const list = await (await fetch(`${base}/api/uploads`, { headers: { Cookie: cookie } })).json();
     expect(list).toEqual([expect.objectContaining({ name: 'predigt-eag-261018.mp3', size: 6, original: true })]);
     expect(await (await fetch(`${base}/api/uploads/predigt-eag-261018.mp3`, { headers: { Cookie: cookie } })).text()).toBe('ID3 v3');
-    expect(await readdir(join(dir, 'data/tmp'))).toEqual([]);
+    expect((await readdir(join(dir, 'data/tmp'))).filter(n => n.endsWith('.mp3'))).toEqual([]);
+    expect(await readdir(join(dir, 'data/tmp/opened'))).toEqual([]); // the opened copy became the backup
     expect(await readdir(join(dir, 'data'))).not.toContain('predigten'); // nothing published on the NAS
   });
 
@@ -165,7 +214,7 @@ describe('slow uploads: answered at once, finished in the background', () => {
     let fail: StoreError | null = null;
     // like OpenCloud over a slow line: writing takes longer than the request may wait
     const slow: SermonStore = {
-      label: 'OpenCloud', list: () => local.list(), exists: n => local.exists(n), read: n => local.read(n),
+      label: 'OpenCloud', list: () => local.list(), exists: n => local.exists(n), read: n => local.read(n), version: n => local.version(n),
       write: async (name, src, replace) => {
         await new Promise(r => setTimeout(r, 300));
         if (fail) { await rm(src, { force: true }); throw fail; }
@@ -193,13 +242,13 @@ describe('slow uploads: answered at once, finished in the background', () => {
     const first = await send('POST', '/api/upload?name=a.mp3');
     expect(first.status).toBe(202);
     const { job } = await first.json();
-    expect(await until(job)).toEqual({ state: 'done', file: 'a.mp3', status: null, error: null });
+    expect(await until(job)).toMatchObject({ state: 'done', file: 'a.mp3', status: null, error: null });
     expect(await local.exists('a.mp3')).toBe(true);
 
     fail = new StoreError(502, 'cloud 423');
     const replaced = await send('PUT', '/api/uploads/a.mp3');
     expect(replaced.status).toBe(202);
-    expect(await until((await replaced.json()).job)).toEqual({ state: 'failed', file: 'a.mp3', status: 502, error: 'cloud 423' });
+    expect(await until((await replaced.json()).job)).toMatchObject({ state: 'failed', file: 'a.mp3', status: 502, error: 'cloud 423' });
     expect((await fetch(`${b}/api/jobs/0123456789abcdef`, { headers: { Cookie: cookie } })).status).toBe(404);
     expect((await fetch(`${b}/api/jobs/${job}`)).status).toBe(401);
     expect(await readdir(join(dir, 'data/tmp'))).toEqual([]);

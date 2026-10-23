@@ -287,7 +287,7 @@ describe('upload', () => {
     expect((await fetch(`${base}/api/uploads/..%2Fsettings.json`, as(a))).status).toBe(400);
     expect((await fetch(`${base}/api/uploads/%E0%A4%A.mp3`, as(a))).status).toBe(400);
     expect((await fetch(`${base}/api/uploads/missing.mp3`, as(a))).status).toBe(404);
-    expect(await readdir(join(dir, 'data/tmp'))).toEqual([]); // no temporary files left
+    expect((await readdir(join(dir, 'data/tmp'))).filter(n => n.endsWith('.mp3'))).toEqual([]); // no temporary files left
     expect(await readFile(join(dir, 'data/original/replace-me.mp3'), 'latin1')).toBe('ID3 v1');
   });
 });
