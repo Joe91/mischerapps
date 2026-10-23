@@ -1,4 +1,4 @@
-// The HTTP API under /api: login, Termine, Einsatzplan, shared settings and publishing MP3s (to OpenCloud, see sermon-store.ts).
+// The HTTP API under /api: login, Einsatzplan (with the answers of the Termine), shared settings and publishing MP3s (to OpenCloud, see sermon-store.ts).
 // Used by server/main.ts (production) and dev-server.ts (npm run dev / preview).
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { randomBytes } from 'node:crypto';
@@ -6,16 +6,15 @@ import { createReadStream, createWriteStream, mkdirSync, readFileSync, rmSync, w
 import { open, rename, stat, unlink } from 'node:fs/promises';
 import { pipeline } from 'node:stream/promises';
 import { join } from 'node:path';
-import { OpError, isoDate, type Op } from '../apps/termine/src/model';
+import { isoDate } from '../packages/plan/cells';
+import { ANSWERS, normalizeSign, type Answer } from '../apps/termine/src/model';
 import { publicPlan, type PlanResponse } from '../packages/plan/plan';
-import { XLSX_MIME } from '../apps/termine/src/xlsx';
 import { LoginLimiter, signSession, verifyPassword, verifySession } from './auth';
 import { ROLES, type Role, type ServerConfig } from './config';
 import { PlanDateMissing, PlanFormatError, PlanReadOnly, PlanStore } from './plan-store';
 import { OverviewStore } from './overview-store';
 import { CloudFile } from './cloud-file';
 import { DamagedSettings, SharedSettings } from './shared-settings';
-import { InvalidSpreadsheet, TermineStore } from './termine-store';
 import { createStore, StoreError, type SermonStore } from './sermon-store';
 
 export class HttpError extends Error {
@@ -73,7 +72,6 @@ const log = (msg: string) => console.log(`${new Date().toISOString()} ${msg}`);
 /** Returns a handler for /api/*: resolves to false if the request is not for the API. */
 export function createApi(cfg: ServerConfig, store: SermonStore = createStore(cfg.cloud, cfg.dataDir)) {
   const secret = secretFor(cfg);
-  const termine = new TermineStore(cfg.dataDir);
   const shared = new SharedSettings(cfg.dataDir);
   const cloudFile = (url?: string) => (cfg.cloud && url ? new CloudFile(url, cfg.cloud) : null);
   const plan = new PlanStore(cfg.dataDir, cloudFile(cfg.cloud?.plan));
@@ -256,34 +254,18 @@ export function createApi(cfg: ServerConfig, store: SermonStore = createStore(cf
     // `target`: where uploads are published ("OpenCloud", or "NAS" without cloud configuration)
     if (path === '/api/me' && method === 'GET') return sendJson(res, 200, { user: role, role, target: store.label });
 
-    if (path === '/api/termine' && method === 'GET') {
-      const { data, skipped } = await termine.read();
-      return sendJson(res, 200, { dates: data.dates, skipped });
-    }
+    // Termine: whether someone can mix on a date – written into the Einsatzplan ("Mischer möglich" / "nicht möglich")
     if (path === '/api/termine' && post) {
-      const op = await readJson(req) as Op;
-      if (op?.action !== 'vote') admin(); // everybody answers, only the admin adds notes
-      // the dates are those of the Einsatzplan (OpenCloud): no others can be answered
+      const { date, sign, answer } = (await readJson(req, 4096) ?? {}) as { date?: unknown; sign?: unknown; answer?: unknown };
+      const code = normalizeSign(String(sign ?? ''));
+      if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new HttpError(400, 'bad date');
+      if (!code) throw new HttpError(400, 'bad sign');
+      if (answer !== null && !ANSWERS.includes(answer as Answer)) throw new HttpError(400, 'bad answer');
+      // only dates of the plan; a page that is out of date must not write into a row that is gone
       const stored = await plan.read();
-      if (!stored?.plan.entries.some(e => e.date === op?.date)) throw new OpError('unknown date');
-      const { data, skipped } = await termine.apply(op);
-      return sendJson(res, 200, { dates: data.dates, skipped });
-    }
-    if (path === '/api/termine/export' && method === 'GET') {
-      admin();
-      return send(res, 200, await termine.exportXlsx(), {
-        'Content-Type': XLSX_MIME, 'Content-Disposition': 'attachment; filename="termine.xlsx"',
-      });
-    }
-    if (path === '/api/termine/import' && post) {
-      admin();
-      let result;
-      try { result = await termine.importXlsx(await readBody(req, 5 * 1024 * 1024)); } catch (e) {
-        if (e instanceof InvalidSpreadsheet) throw new HttpError(400, 'not a valid xlsx file');
-        throw e;
-      }
-      log(`termine imported: ${result.dates} dates, ${result.skipped} rows skipped`);
-      return sendJson(res, 200, result);
+      if (!stored?.plan.entries.some(e => e.date === date)) throw new HttpError(400, 'unknown date');
+      await plan.answer(date, code, answer as Answer | null);
+      return send(res, 204);
     }
 
     if (path === '/api/plan/import' && post) {
@@ -376,7 +358,6 @@ export function createApi(cfg: ServerConfig, store: SermonStore = createStore(cf
         if (e.status === 502) console.error(`${store.label}: ${e.message}`);
         sendText(res, e.status, e.message);
       }
-      else if (e instanceof OpError) sendText(res, 400, e.message);
       else if (e instanceof PlanDateMissing) sendText(res, 404, 'date not in plan');
       else if (e instanceof PlanFormatError) { console.error(`einsatzplan.xlsx: ${e.message}`); sendText(res, 500, 'einsatzplan.xlsx is damaged'); }
       else if (e instanceof DamagedSettings) { console.error(e.message); sendText(res, 500, 'settings.json is damaged'); }

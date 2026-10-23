@@ -3,7 +3,7 @@ import './home.css';
 import apps from '../apps.json';
 import { ensureLogin, isAdmin, logout } from '../packages/auth/auth';
 import { h, $, toast } from '../packages/ui-kit/dom';
-import { isoDate } from '../apps/termine/src/model';
+import { isoDate } from '../packages/plan/cells';
 import type { PlanEntry, PlanResponse } from '../packages/plan/plan';
 import { assignButton } from '../packages/plan/assign';
 

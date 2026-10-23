@@ -1,7 +1,7 @@
 // The eAg-Übersicht (eAg_Übersicht.xlsx in OpenCloud, "cloud.overview" in the config): per service the date
 // (column A), the sermon series (G) and the preacher (K), one sheet per year ("2026", "2025", …). The export uses
 // it to fill in the tags of a sermon; the number of a sermon within its series ("Zeit – 4") is counted from the dates.
-import { toIsoDate, toText } from '../apps/termine/src/xlsx';
+import { toIsoDate, toText } from '../packages/plan/cells';
 import { SyncedFile, type CloudFile } from './cloud-file';
 import { Xlsx, colIndex } from './xlsx';
 

@@ -24,10 +24,10 @@ describe('Einsatzplan xlsx', () => {
     const { entries, hidden } = await readPlanXlsx(await planSheet());
     expect(hidden).toBe(2);
     expect(entries).toEqual([
-      { date: '2026-11-01', team: 'H-Team', lead: 'Berta', mischer: 'AS, JD', beamer: 'RR', special: 'Abendmahl', note: '' },
+      { date: '2026-11-01', team: 'H-Team', lead: 'Berta', mischer: 'AS, JD', beamer: 'RR', special: 'Abendmahl', note: '', votes: { JS: 'yes', AS: 'yes', KL: 'no' } },
       // a remark mentioning "kein eAg" does not hide the date
-      { date: '2026-11-15', team: 'J-Team', lead: 'Anna', mischer: 'KL', beamer: 'MS', special: '', note: 'kein eAg am 22.' },
-      { date: '2026-11-29', team: '??', lead: '??', mischer: '', beamer: 'GK', special: '', note: '' },
+      { date: '2026-11-15', team: 'J-Team', lead: 'Anna', mischer: 'KL', beamer: 'MS', special: '', note: 'kein eAg am 22.', votes: { KL: 'yes', JS: 'no', AS: 'no' } },
+      { date: '2026-11-29', team: '??', lead: '??', mischer: '', beamer: 'GK', special: '', note: '', votes: {} },
     ]);
   });
 
@@ -46,7 +46,7 @@ describe('Einsatzplan xlsx', () => {
     const plan = await readPlanXlsx(await planSheet());
     const view = publicPlan(plan, '2026-11-02', 1);
     expect(view.names).toEqual({});
-    expect(view.entries).toEqual([{ date: '2026-11-15', team: 'J-Team', lead: 'Anna', mischer: 'KL', beamer: 'MS', special: '', note: '' }]);
+    expect(view.entries).toEqual([{ date: '2026-11-15', team: 'J-Team', lead: 'Anna', mischer: 'KL', beamer: 'MS', special: '', note: '', votes: {} }]);
     expect(publicPlan(plan, '2026-11-01').entries.map(e => e.date)).toEqual(['2026-11-01', '2026-11-15', '2026-11-29']);
   });
 });

@@ -5,8 +5,8 @@
 // It is parsed again only when the file changes, so the public GET /api/plan stays cheap.
 import { readFile, stat, utimes } from 'node:fs/promises';
 import { join } from 'node:path';
-import { readPlanXlsx, PlanFormatError, type Plan } from '../packages/plan/plan';
-import { toIsoDate } from '../apps/termine/src/xlsx';
+import { answerCells, planColumns, readPlanXlsx, PlanFormatError, type Availability, type Plan } from '../packages/plan/plan';
+import { toIsoDate, toText } from '../packages/plan/cells';
 import { serialQueue, writeAtomic } from './files';
 import { SyncedFile, type CloudFile } from './cloud-file';
 import { describeStoreError, StoreError } from './sermon-store';
@@ -23,31 +23,45 @@ export class PlanDateMissing extends Error {}
 const CHECK_EVERY_MS = 2 * 60_000;
 
 /**
- * Writes `mischer` into the Mischer column of the row for `date` (first sheet; header row with "Datum" and
- * "Mischer" as in readPlanXlsx). Only that cell changes. Throws PlanDateMissing, or PlanFormatError for a
- * file without such a header or a cell with a formula.
+ * Changes cells in the row for `date` (first sheet; header row with "Datum" and "Mischer" as in readPlanXlsx):
+ * `edit` gets the columns and the current texts and returns column → new text. Only those cells change. Throws
+ * PlanDateMissing, or PlanFormatError for a file without such a header or a cell with a formula.
  */
-export function setMischer(data: Uint8Array, date: string, mischer: string): Uint8Array {
+function editRow(data: Uint8Array, date: string,
+  edit: (col: ReturnType<typeof planColumns>, text: (col: number) => string) => Map<number, string>): Uint8Array {
   let x: Xlsx, rows;
   try { x = new Xlsx(data); rows = x.rows(0); } catch (e) {
     throw e instanceof XlsxError ? new PlanFormatError(e.message) : e;
   }
   const numbers = [...rows.keys()].sort((a, b) => a - b);
   const norm = (v: unknown) => String(v ?? '').trim().toLowerCase();
-  let header = -1, dateCol = -1, mischerCol = -1;
-  for (const r of numbers.slice(0, 20)) {
-    const find = (title: string) => [...rows.get(r)!].find(([, v]) => norm(v) === title)?.[0] ?? -1;
-    if (find('datum') >= 0 && find('mischer') >= 0) { header = r; dateCol = find('datum'); mischerCol = find('mischer'); break; }
-  }
-  if (header < 0) throw new PlanFormatError('no header with "Datum" and "Mischer"');
+  const header = numbers.slice(0, 20).find(r => [...rows.get(r)!.values()].some(v => norm(v) === 'datum') && [...rows.get(r)!.values()].some(v => norm(v) === 'mischer'));
+  if (header === undefined) throw new PlanFormatError('no header with "Datum" and "Mischer"');
+  const titles: string[] = [];
+  for (const [c, v] of rows.get(header)!) titles[c] = norm(v);
+  const col = planColumns(Array.from(titles, t => t ?? ''));
   const iso = (v: unknown) => (typeof v === 'number' ? x.serialToIso(v) : toIsoDate(v));
-  const row = numbers.find(r => r > header && iso(rows.get(r)!.get(dateCol)) === date);
+  const row = numbers.find(r => r > header && iso(rows.get(r)!.get(col.date)) === date);
   if (row === undefined) throw new PlanDateMissing(date);
-  try { x.setText(0, row, mischerCol, mischer); } catch (e) {
+  try {
+    for (const [c, text] of edit(col, c => toText(rows.get(row)!.get(c)))) x.setText(0, row, c, text);
+  } catch (e) {
     throw e instanceof XlsxError ? new PlanFormatError(e.message) : e;
   }
   return x.toBuffer();
 }
+
+/** Writes `mischer` into the Mischer cell of `date`. */
+export const setMischer = (data: Uint8Array, date: string, mischer: string) =>
+  editRow(data, date, col => new Map([[col.mischer, mischer]]));
+
+/** Enters `sign`'s answer for `date` in "Mischer möglich" / "nicht möglich" (null: withdrawn); other entries stay. */
+export const setAvailability = (data: Uint8Array, date: string, sign: string, answer: Availability | null) =>
+  editRow(data, date, (col, text) => {
+    if (col.possible < 0 || col.notPossible < 0) throw new PlanFormatError('no columns "Mischer möglich" and "nicht möglich"');
+    const cells = answerCells(text(col.possible), text(col.notPossible), sign, answer);
+    return new Map([[col.possible, cells.possible], [col.notPossible, cells.notPossible]]);
+  });
 
 export class PlanStore {
   private file: string;
@@ -109,22 +123,33 @@ export class PlanStore {
     return { dates: entries.length, hidden };
   }
 
-  /**
-   * Enters who mixes on `date` (empty: nobody) – in OpenCloud, unless someone changed the file meanwhile
-   * (then once more on the new version), or in the local plan.
-   */
+  /** Enters who mixes on `date` (empty: nobody). */
   assign(date: string, mischer: string): Promise<void> {
+    return this.change(data => setMischer(data, date, mischer));
+  }
+
+  /** Enters whether `sign` can mix on `date` (null: answer withdrawn). */
+  answer(date: string, sign: string, answer: Availability | null): Promise<void> {
+    return this.change(data => setAvailability(data, date, sign, answer));
+  }
+
+  /**
+   * Changes the plan with `edit` – in OpenCloud, unless someone changed the file meanwhile (then once more on the
+   * new version), or in the local plan. One change at a time.
+   */
+  private change(edit: (data: Uint8Array) => Uint8Array): Promise<void> {
     return this.queue(async () => {
       if (!this.cloud) {
         let data: Uint8Array;
-        try { data = await readFile(this.file); } catch { throw new PlanDateMissing(date); }
-        await writeAtomic(this.file, setMischer(data, date, mischer));
+        try { data = await readFile(this.file); } catch { throw new PlanDateMissing('no plan'); }
+        await writeAtomic(this.file, edit(data));
+        this.cache = null;
         return;
       }
       for (let attempt = 0; ; attempt++) {
         const current = await this.cloud.file.get();
         try {
-          await this.cloud.file.put(setMischer(current.data, date, mischer), current.etag);
+          await this.cloud.file.put(edit(current.data), current.etag);
           break;
         } catch (e) {
           if (!(e instanceof StoreError && e.message === 'changed') || attempt > 0) throw e;

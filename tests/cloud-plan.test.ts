@@ -121,6 +121,20 @@ describe('Einsatzplan and eAg-Übersicht in OpenCloud', () => {
     expect(entries.find(e => e.date === '2026-11-15')?.mischer).toBe('AS');
   });
 
+  it('writes answers into the spreadsheet in OpenCloud, also when someone saved it meanwhile', async () => {
+    cloud.state.beforePut = path => {
+      const f = cloud.files.get(path)!;
+      cloud.files.set(path, { data: setMischer(f.data, '2026-11-29', 'GK'), version: f.version + 1 });
+    };
+    const res = await fetch(`${base}/api/termine`, {
+      method: 'POST', headers: { Cookie: mischer, 'Content-Type': 'application/json' }, body: JSON.stringify({ date: '2026-11-29', sign: 'JD', answer: 'maybe' }),
+    });
+    expect(res.status).toBe(204);
+    const entry = (await cloudPlan()).find(e => e.date === '2026-11-29')!;
+    expect([entry.mischer, entry.votes]).toEqual(['GK', { JD: 'maybe' }]);
+    expect((await getPlan()).entries.find((e: { date: string }) => e.date === '2026-11-29').votes).toEqual({ JD: 'maybe' });
+  });
+
   it('counts an assignment as done even if reading the plan back fails', async () => {
     cloud.state.propfindDown = true;
     expect((await assign(admin, '2026-11-29', 'MS')).status).toBe(204);

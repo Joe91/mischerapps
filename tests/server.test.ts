@@ -9,8 +9,8 @@ import { createApi } from '../server/api';
 import { createStatic } from '../server/static';
 import { hashPassword, LoginLimiter, signSession, verifyPassword, verifySession } from '../server/auth';
 import { parseConfig, ConfigError, type ServerConfig } from '../server/config';
-import { writeTermineXlsx } from '../apps/termine/src/xlsx';
-import { isoDate } from '../apps/termine/src/model';
+import { isoDate } from '../packages/plan/cells';
+import { readPlanXlsx } from '../packages/plan/plan';
 import writeExcelFile from 'write-excel-file/universal';
 
 let server: Server, base: string, dir: string;
@@ -89,88 +89,51 @@ describe('login', () => {
   });
 });
 
-describe('termine', () => {
-  // the dates come from the Einsatzplan: one for this block (removed afterwards, the plan tests start without one)
+describe('termine (answers in the Einsatzplan)', () => {
+  // the dates and answers live in the Einsatzplan: one for this block (removed afterwards, the plan tests start without one)
   const planFile = () => join(dir, 'data/einsatzplan.xlsx');
+  const answer = (cookie: string, date: string, sign: string, a: string | null) => fetch(`${base}/api/termine`, json(cookie, 'POST', { date, sign, answer: a }));
+  const votes = async (date: string) => (await readPlanXlsx(new Blob([new Uint8Array(await readFile(planFile()))]))).entries.find(e => e.date === date)?.votes;
   beforeAll(async () => {
-    const dates = ['2030-01-06', '2030-02-03', '2030-03-03', '2030-05-05'];
-    await writeFile(planFile(), Buffer.from(await (await writeExcelFile([['Datum', 'Mischer'], ...dates.map(d => [d, 'JD'])] as never).toBlob()).arrayBuffer()));
+    const header = ['Datum', 'Mischer', 'Mischer möglich', 'nicht möglich', 'Beamer', 'Beamer möglich', 'nicht möglich'];
+    const rows = ['2030-01-06', '2030-02-03', '2030-03-03'].map(d => [d, 'JD', 'KL', null, 'MS', 'MS', 'RR']);
+    await writeFile(planFile(), Buffer.from(await (await writeExcelFile([header, ...rows] as never).toBlob()).arrayBuffer()));
   });
   afterAll(async () => { await rm(planFile(), { force: true }); });
 
-  it('lets everybody answer, shows the same data to all, and keeps it in a spreadsheet', async () => {
+  it('lets everybody answer; the answers go into "Mischer möglich" / "nicht möglich" and come back with the plan', async () => {
     const m = (await login('mischer', 'mischer-password')).cookie, a = (await login('admin', 'admin-password')).cookie;
-    expect((await fetch(`${base}/api/termine`, json(m, 'POST', { action: 'vote', date: '2030-01-06', sign: 'jd', answer: 'yes' }))).status).toBe(200);
-    await fetch(`${base}/api/termine`, json(a, 'POST', { action: 'vote', date: '2030-01-06', sign: 'MK', answer: 'maybe' }));
-    const seen = await (await fetch(`${base}/api/termine`, as(m))).json();
-    expect(seen.dates['2030-01-06'].votes).toEqual({ JD: 'yes', MK: 'maybe' });
-    expect((await readFile(join(dir, 'data/termine.xlsx'))).subarray(0, 2).toString()).toBe('PK'); // a real xlsx (zip)
+    expect((await answer(m, '2030-01-06', 'jd', 'yes')).status).toBe(204);
+    expect((await answer(a, '2030-01-06', 'MK', 'maybe')).status).toBe(204);
+    expect((await answer(m, '2030-01-06', 'AS', 'no')).status).toBe(204);
+    expect(await votes('2030-01-06')).toEqual({ KL: 'yes', JD: 'yes', MK: 'maybe', AS: 'no' });
+    const plan = await (await fetch(`${base}/api/plan`, as(m))).json();
+    expect(plan.entries.find((e: { date: string }) => e.date === '2030-01-06').votes).toEqual({ KL: 'yes', JD: 'yes', MK: 'maybe', AS: 'no' });
+    expect((await (await fetch(`${base}/api/plan`)).json()).entries.every((e: { votes: object }) => !Object.keys(e.votes).length)).toBe(true); // not for visitors
+    expect((await answer(m, '2030-01-06', 'JD', null)).status).toBe(204); // withdrawn
+    expect((await votes('2030-01-06'))?.JD).toBeUndefined();
   });
 
   it('keeps simultaneous answers', async () => {
     const m = (await login('mischer', 'mischer-password')).cookie;
     const signs = ['AA', 'BB', 'CC', 'DD', 'EE', 'FF', 'GG', 'HH'];
-    const res = await Promise.all(signs.map(sign => fetch(`${base}/api/termine`, json(m, 'POST', { action: 'vote', date: '2030-02-03', sign, answer: 'yes' }))));
-    expect(res.every(r => r.status === 200)).toBe(true);
-    const { dates } = await (await fetch(`${base}/api/termine`, as(m))).json();
-    expect(Object.keys(dates['2030-02-03'].votes).sort()).toEqual(signs);
+    const res = await Promise.all(signs.map(sign => answer(m, '2030-02-03', sign, 'yes')));
+    expect(res.every(r => r.status === 204)).toBe(true);
+    expect(Object.keys((await votes('2030-02-03'))!).sort()).toEqual([...signs, 'KL'].sort());
   });
 
-  it('only lets the admin add notes to a date', async () => {
-    const m = (await login('mischer', 'mischer-password')).cookie, a = (await login('admin', 'admin-password')).cookie;
-    const edit = { action: 'update', date: '2030-03-03', title: 'Abendmahl', time: '10:00', note: '' };
-    expect((await fetch(`${base}/api/termine`, json(m, 'POST', edit))).status).toBe(403);
-    expect((await fetch(`${base}/api/termine`, json(a, 'POST', edit))).status).toBe(200);
-    expect((await (await fetch(`${base}/api/termine`, as(m))).json()).dates['2030-03-03'].title).toBe('Abendmahl');
-  });
-
-  it('takes the dates from the Einsatzplan: none can be added or deleted, only its dates answered', async () => {
-    const m = (await login('mischer', 'mischer-password')).cookie, a = (await login('admin', 'admin-password')).cookie;
-    for (const action of ['add', 'delete']) {
-      expect((await fetch(`${base}/api/termine`, json(m, 'POST', { action, date: '2030-05-05' }))).status).toBe(403);
-      const res = await fetch(`${base}/api/termine`, json(a, 'POST', { action, date: '2030-05-05' }));
-      expect([res.status, await res.text()]).toEqual([400, 'bad action']);
+  it('only takes answers for dates of the plan, and rejects invalid input', async () => {
+    const m = (await login('mischer', 'mischer-password')).cookie;
+    const refused = await answer(m, '2030-06-02', 'JD', 'yes');
+    expect([refused.status, await refused.text()]).toEqual([400, 'unknown date']);
+    expect((await answer(m, '2030-13-01', 'JD', 'yes')).status).toBe(400);
+    expect((await answer(m, '2030-03-03', '', 'yes')).status).toBe(400);
+    expect((await answer(m, '2030-03-03', 'JD', 'sure')).status).toBe(400);
+    expect((await fetch(`${base}/api/termine`, { method: 'POST', headers: { Cookie: m }, body: '{}' })).status).toBe(415);
+    expect((await answer('', '2030-03-03', 'JD', 'yes')).status).toBe(401);
+    for (const gone of ['/api/termine', '/api/termine/export', '/api/termine/template']) {
+      expect((await fetch(`${base}${gone}`, as(m))).status).toBe(404); // no spreadsheet of its own any more
     }
-    const refused = await fetch(`${base}/api/termine`, json(m, 'POST', { action: 'vote', date: '2030-06-02', sign: 'JD', answer: 'yes' }));
-    expect([refused.status, await refused.text()]).toEqual([400, 'unknown date']); // not in the plan
-    expect((await fetch(`${base}/api/termine`, json(a, 'POST', { action: 'update', date: '2030-06-02', title: 'x', time: '', note: '' }))).status).toBe(400);
-    expect((await fetch(`${base}/api/termine`, json(m, 'POST', { action: 'vote', date: '2030-05-05', sign: 'JD', answer: 'no' }))).status).toBe(200);
-    expect((await (await fetch(`${base}/api/termine`, as(m))).json()).dates['2030-05-05'].votes).toEqual({ JD: 'no' });
-    expect((await fetch(`${base}/api/termine/template`, as(a))).status).toBe(404); // no template of Sundays any more
-  });
-
-  it('rejects invalid input', async () => {
-    const a = (await login('admin', 'admin-password')).cookie;
-    expect((await fetch(`${base}/api/termine`, json(a, 'POST', { action: 'vote', date: '2030-13-01', sign: 'JD', answer: 'yes' }))).status).toBe(400);
-    expect((await fetch(`${base}/api/termine`, json(a, 'POST', { action: 'vote', date: '2030-03-03', sign: '', answer: 'yes' }))).status).toBe(400);
-    expect((await fetch(`${base}/api/termine`, json(a, 'POST', { action: 'vote', date: '2030-03-03', sign: 'JD', answer: 'sure' }))).status).toBe(400);
-    expect((await fetch(`${base}/api/termine`, { method: 'POST', headers: { Cookie: a }, body: '{}' })).status).toBe(415);
-  });
-
-  it('exports and imports the spreadsheet (admin only) and keeps a backup', async () => {
-    const m = (await login('mischer', 'mischer-password')).cookie, a = (await login('admin', 'admin-password')).cookie;
-    expect((await fetch(`${base}/api/termine/export`, as(m))).status).toBe(403);
-    const exported = await fetch(`${base}/api/termine/export`, as(a));
-    expect(exported.headers.get('content-disposition')).toContain('termine.xlsx');
-    expect((await exported.arrayBuffer()).byteLength).toBeGreaterThan(1000);
-
-    const sheet = Buffer.from(await (await writeTermineXlsx({ dates: { '2031-05-04': { title: 'Import', time: '', assigned: '', note: '', votes: { XY: 'no' } } } })).arrayBuffer());
-    expect((await fetch(`${base}/api/termine/import`, { method: 'POST', headers: { Cookie: m }, body: sheet })).status).toBe(403);
-    expect((await fetch(`${base}/api/termine/import`, { method: 'POST', headers: { Cookie: a }, body: 'garbage' })).status).toBe(400);
-    const ok = await fetch(`${base}/api/termine/import`, { method: 'POST', headers: { Cookie: a }, body: sheet });
-    expect(await ok.json()).toEqual({ dates: 1, skipped: 0 });
-    expect(Object.keys((await (await fetch(`${base}/api/termine`, as(a))).json()).dates)).toEqual(['2031-05-04']);
-    expect((await readFile(join(dir, 'data/termine.backup.xlsx'))).length).toBeGreaterThan(0);
-  });
-
-  it('never overwrites a spreadsheet it cannot read', async () => {
-    const a = (await login('admin', 'admin-password')).cookie;
-    const file = join(dir, 'data/termine.xlsx');
-    const before = await readFile(file);
-    await writeFile(file, 'not a spreadsheet');
-    expect((await fetch(`${base}/api/termine`, json(a, 'POST', { action: 'vote', date: '2030-01-06', sign: 'JD', answer: 'yes' }))).status).toBe(500);
-    expect((await readFile(file)).toString()).toBe('not a spreadsheet');
-    await writeFile(file, before);
   });
 });
 

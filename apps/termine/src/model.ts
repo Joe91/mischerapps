@@ -1,79 +1,11 @@
-// Data model of the Termine app, shared by the browser and the tests. The dates themselves come from the
-// Einsatzplan (OpenCloud, see packages/plan); this data holds the answers and the admin's notes per date.
+// The answers of the Termine app: who can mix on a date. They live in the Einsatzplan in OpenCloud – a Kürzel in
+// "Mischer möglich" (with "?" for maybe) or "nicht möglich", see packages/plan/plan.ts.
 
 export type Answer = 'yes' | 'maybe' | 'no';
 export const ANSWERS: Answer[] = ['yes', 'maybe', 'no'];
-
-export interface DateEntry {
-  title: string;
-  time: string;
-  /** who was assigned in earlier versions (now the Mischer comes from the Einsatzplan); kept in the spreadsheet */
-  assigned: string;
-  note: string;
-  /** Kürzel → answer */
-  votes: Record<string, Answer>;
-  /** spreadsheet cells the app does not understand (own columns, "x" in a Kürzel column): column → text, kept as they are */
-  extra?: Record<string, string>;
-}
-
-export interface TermineData {
-  dates: Record<string, DateEntry>;
-  /** what else is in the spreadsheet, so that hand edits survive the next change made in the app */
-  sheet?: {
-    /** headers from column G on, in file order (Kürzel and own columns, also those without any answers) */
-    columns: string[];
-    /** rows with content but without a usable date, as text */
-    undated: string[][];
-  };
-}
-
-/** Changes to one date of the Einsatzplan (the server checks that the date is in it). */
-export type Op =
-  | { action: 'vote'; date: string; sign: string; answer: Answer | null }
-  | { action: 'update'; date: string; title: string; time: string; note: string };
-
-export const LIMITS = { title: 100, time: 20, assigned: 60, note: 1000 } as const;
-
-export const emptyEntry = (): DateEntry => ({ title: '', time: '', assigned: '', note: '', votes: {} });
-
-const pad = (n: number) => String(n).padStart(2, '0');
-export const isoDate = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-
-/** Real calendar day between 2000 and 2100 (also the range the spreadsheet round-trips safely). */
-export function isValidDate(s: string): boolean {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
-  const [y, m, d] = s.split('-').map(Number);
-  if (y < 2000 || y > 2100) return false;
-  const dt = new Date(y, m - 1, d);
-  return dt.getFullYear() === y && dt.getMonth() === m - 1 && dt.getDate() === d;
-}
 
 /** Kürzel: 1–6 letters/digits, upper case ("jd" → "JD"). Returns '' if invalid. */
 export function normalizeSign(s: string): string {
   const v = s.trim().toUpperCase();
   return /^[\p{L}\p{N}]{1,6}$/u.test(v) ? v : '';
-}
-
-export class OpError extends Error {}
-
-/** Applies one change in place; the date gets its row with the first answer or note. Throws OpError for invalid input (→ HTTP 400). */
-export function applyOp(data: TermineData, op: Op): TermineData {
-  if (!op || typeof op !== 'object' || !isValidDate(String(op.date))) throw new OpError('bad date');
-  if (op.action === 'vote') {
-    const sign = normalizeSign(String(op.sign ?? ''));
-    if (!sign) throw new OpError('bad sign');
-    if (op.answer !== null && !ANSWERS.includes(op.answer)) throw new OpError('bad answer');
-    const entry = data.dates[op.date] ??= emptyEntry();
-    if (entry.extra) delete entry.extra[sign]; // the answer replaces whatever was typed into the cell
-    if (op.answer === null) delete entry.votes[sign];
-    else entry.votes[sign] = op.answer;
-  } else if (op.action === 'update') {
-    const entry = data.dates[op.date] ??= emptyEntry();
-    for (const k of ['title', 'time', 'note'] as const) {
-      entry[k] = String(op[k] ?? '').trim().slice(0, LIMITS[k]);
-    }
-  } else {
-    throw new OpError('bad action');
-  }
-  return data;
 }

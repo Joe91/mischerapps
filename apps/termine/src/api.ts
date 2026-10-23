@@ -1,5 +1,5 @@
-// Storage of the Termine: the server (server/api.ts) keeps them in a spreadsheet on the NAS.
-import type { Op, TermineData } from './model';
+// The Termine's data: the Einsatzplan from the server (OpenCloud), and the answers written into it.
+import type { Answer } from './model';
 import type { PlanResponse } from '../../../packages/plan/plan';
 
 export class ApiError extends Error {
@@ -7,8 +7,6 @@ export class ApiError extends Error {
     super(describeApiError(status, body));
   }
 }
-
-export interface Loaded { data: TermineData; /** rows of the spreadsheet that were ignored (no valid date) */ skipped: number; }
 
 /** Plain-language messages for the status codes of the server. */
 export function describeApiError(status: number, body: string): string {
@@ -18,11 +16,12 @@ export function describeApiError(status: number, body: string): string {
     case 400:
       if (b === 'bad sign') return 'Ungültiges Kürzel (1–6 Buchstaben oder Ziffern).';
       if (b === 'unknown date') return 'Diesen Termin gibt es im Einsatzplan nicht (mehr). Die Liste wird neu geladen.';
-      return `Der Server hat die Änderung abgelehnt (${b || 400}).`;
+      return `Der Server hat die Antwort abgelehnt (${b || 400}).`;
     case 401: return 'Die Anmeldung ist abgelaufen. Bitte die Seite neu laden und anmelden.';
-    case 403: return 'Das darf nur der Admin.';
-    case 413: return 'Die Datei ist zu groß.';
-    case 500: return 'Fehler auf dem Server (ist die Datei termine.xlsx kaputt?).';
+    case 409: return 'Die Tabelle wurde gerade von jemand anderem geändert. Bitte die Antwort noch einmal geben.';
+    case 423: return 'Die Tabelle ist gerade in OpenCloud zum Bearbeiten geöffnet – die Antwort konnte nicht eingetragen werden. Bitte später noch einmal.';
+    case 500: return 'Die Tabelle kann nicht gelesen werden (beschädigt, oder die Spalten „Mischer möglich“ / „nicht möglich“ fehlen).';
+    case 502: return 'OpenCloud ist gerade nicht erreichbar – die Antwort konnte nicht eingetragen werden.';
     default: return `Anfrage fehlgeschlagen (${status}${b ? `: ${b.slice(0, 200)}` : ''}).`;
   }
 }
@@ -38,28 +37,10 @@ async function request(path: string, init: RequestInit = {}): Promise<Response> 
   return res;
 }
 
-async function loaded(res: Response): Promise<Loaded> {
-  const body = await res.json() as { dates?: TermineData['dates']; skipped?: number };
-  return { data: { dates: body.dates ?? {} }, skipped: body.skipped ?? 0 };
-}
-
-export const fetchData = async (): Promise<Loaded> => loaded(await request('/api/termine'));
-
-export const sendOp = async (op: Op): Promise<Loaded> =>
-  loaded(await request('/api/termine', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(op) }));
-
-/** Admin: the current spreadsheet. */
-export const exportXlsx = async (): Promise<Blob> => (await request('/api/termine/export')).blob();
-
-/** Admin: replaces all dates with the content of a spreadsheet. */
-export async function importXlsx(file: Blob): Promise<{ dates: number; skipped: number }> {
-  try {
-    return await (await request('/api/termine/import', { method: 'POST', body: file })).json();
-  } catch (e) {
-    if (e instanceof ApiError && e.status === 400) throw new Error('Das ist keine gültige Excel-Datei (.xlsx).');
-    throw e;
-  }
-}
-
-/** The Einsatzplan (OpenCloud): the dates of the Termine with team, Mischer, Beamer and remarks. */
+/** The Einsatzplan (OpenCloud): the dates with team, Mischer, Beamer, remarks and who can mix. */
 export const fetchPlan = async (): Promise<PlanResponse> => (await request('/api/plan')).json();
+
+/** Enters whether `sign` can mix on `date` (null: withdrawn) in the Einsatzplan. */
+export async function sendAnswer(date: string, sign: string, answer: Answer | null): Promise<void> {
+  await request('/api/termine', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date, sign, answer }) });
+}

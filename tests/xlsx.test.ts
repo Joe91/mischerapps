@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { strToU8, unzipSync, zipSync, strFromU8 } from 'fflate';
 import writeExcelFile from 'write-excel-file/universal';
 import { colIndex, colName, Xlsx, XlsxError } from '../server/xlsx';
-import { PlanDateMissing, PlanFormatError, setMischer } from '../server/plan-store';
+import { PlanDateMissing, PlanFormatError, setAvailability, setMischer } from '../server/plan-store';
 import { readOverview } from '../server/overview-store';
 import { readPlanXlsx } from '../packages/plan/plan';
 import { planSheet } from './plan.test';
@@ -86,11 +86,25 @@ describe('Mischer in the Einsatzplan', () => {
     expect(again.map(e => [e.date, e.mischer])).toEqual([['2026-11-01', ''], ['2026-11-15', 'JD'], ['2026-11-29', 'KL']]);
   });
 
+  it('writes answers into "Mischer möglich" / "nicht möglich", leaving the Beamer columns alone', async () => {
+    const data = await bytes(await planSheet());
+    const read = async (d: Uint8Array) => (await readPlanXlsx(new Blob([d as Uint8Array<ArrayBuffer>]))).entries.find(e => e.date === '2026-11-15')!;
+    let d = setAvailability(data, '2026-11-15', 'JD', 'maybe');
+    expect((await read(d)).votes).toEqual({ KL: 'yes', JD: 'maybe', JS: 'no', AS: 'no' });
+    d = setAvailability(d, '2026-11-15', 'AS', 'yes'); // from "nicht möglich" to "möglich"
+    d = setAvailability(d, '2026-11-15', 'KL', null);
+    expect((await read(d)).votes).toEqual({ JD: 'maybe', AS: 'yes', JS: 'no' });
+    const cells = new Xlsx(d).rows().get(3)!; // row of 15.11. (title, header, then this date)
+    expect([cells.get(5), cells.get(6), cells.get(8), cells.get(9)]).toEqual(['JD?, AS', 'JS', 'MS, RR', 'GK']); // F, G changed; I, J as before
+  });
+
   it('reports dates that are not in the plan and files without the columns', async () => {
     const data = await bytes(await planSheet());
     expect(() => setMischer(data, '2027-01-03', 'JD')).toThrow(PlanDateMissing);
     const other = await bytes(await writeExcelFile([['Datum', 'Anlass'], ['01.11.2026', 'x']] as never).toBlob());
     expect(() => setMischer(other, '2026-11-01', 'JD')).toThrow(PlanFormatError);
+    const noAnswers = await bytes(await writeExcelFile([['Datum', 'Mischer'], ['01.11.2026', 'JD']] as never).toBlob());
+    expect(() => setAvailability(noAnswers, '2026-11-01', 'JD', 'yes')).toThrow(/Mischer möglich/);
   });
 });
 

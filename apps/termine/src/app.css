@@ -83,7 +83,6 @@
 /* ---- edit ---- */
 .edit-form { margin-top: .9rem; padding-top: .9rem; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: .8rem; }
 .edit-form .actions { margin-top: 0; }
-.narrow-dialog { width: min(520px, calc(100vw - 2rem)); }
 .row.nowrap { flex-wrap: nowrap; }
 .row.nowrap input { flex: 1; }
 
@@ -97,4 +96,3 @@
   .edit-btn { padding: .25rem .4rem; }
 }
 .plan-info { margin-top: .15rem; }
-.plan-note { margin-top: .5rem; }

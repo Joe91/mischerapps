@@ -23,7 +23,7 @@ die nicht im Repository liegt ([Konfiguration](#konfiguration)).
 | Benutzer | Darf |
 | --- | --- |
 | `mischer` | Termine ansehen und beantworten · Aufnahmen schneiden und veröffentlichen. Keine Einstellungen. |
-| `admin` | alles von `mischer` · Termine anlegen und bearbeiten · im Einsatzplan den Mischer eintragen · veröffentlichte Predigten nachbearbeiten und ersetzen · Excel-Tabelle herunter-/hochladen · Einstellungen (Lautheit, Export, Namensschema, Cover, Anzahl Sonntage) |
+| `admin` | alles von `mischer` · im Einsatzplan den Mischer eintragen · veröffentlichte Predigten nachbearbeiten und ersetzen · Einstellungen (Lautheit, Export, Namensschema, Cover, Anzahl Sonntage) |
 
 Die Einstellungen des Admins gelten für alle (sie liegen auf dem Server, `settings.json`). Die Oberfläche blendet für
 `mischer` alles Weitere aus; der Server prüft jede Anfrage selbst. Falsche Passwörter bremsen den Zugang
@@ -56,8 +56,6 @@ Die App muss unter der **Wurzel einer Adresse** laufen (eigene Subdomain, kein U
 Gespeichert wird alles im Ordner `data` (sichern wie jeden anderen Ordner):
 
 ```
-data/termine.xlsx          Termine und Antworten (Excel, auch von Hand bearbeitbar)
-data/termine.backup.xlsx   Stand vor dem letzten Hochladen einer Tabelle
 data/einsatzplan.xlsx      Einsatzplan (Mischer, Beamer, Musikteam): zuletzt aus OpenCloud gelesene Kopie (ohne cloud.plan: vom Admin hochgeladen)
 data/settings.json         gemeinsame Einstellungen (vom Admin)
 data/original/             die zuerst veröffentlichte Fassung nachbearbeiteter Predigten (Sicherung, nicht veröffentlicht)
@@ -69,16 +67,14 @@ Die veröffentlichten Predigten liegen nicht hier, sondern im Ordner in OpenClou
 Entwickeln, in `data/predigten/`).
 
 Auf dem NAS ist das `/volume1/docker/mischer/data/` (File Station: `docker` → `mischer` → `data`). Die Dateien entstehen erst bei Bedarf:
-`termine.xlsx` bei der ersten Änderung an den Terminen, `settings.json` beim ersten Speichern der Einstellungen. Dateien mit Punkt am Anfang (`.session-secret`) zeigt File Station nur an, wenn „Versteckte Dateien anzeigen“ aktiv ist.
+`settings.json` beim ersten Speichern der Einstellungen. Eine `termine.xlsx` aus früheren Versionen wird nicht mehr benutzt und kann
+gelöscht werden. Dateien mit Punkt am Anfang (`.session-secret`) zeigt File Station nur an, wenn „Versteckte Dateien anzeigen“ aktiv ist.
 
 ### Gut zu wissen
 
 - **Port nur für den Reverse-Proxy:** Die Compose-Datei bindet `9120` an `127.0.0.1`, also ist er nur vom NAS selbst erreichbar,
   nicht aus dem Netz und nicht über den Router. Wer den Proxy umgehen kann, könnte die Kopfzeile `X-Forwarded-For` fälschen und
   die Sperre nach Fehlversuchen aushebeln. Deshalb diese Bindung beibehalten und den Port nicht am Router weiterleiten.
-- **Handarbeit in `termine.xlsx`** bleibt erhalten: eigene Spalten (z. B. „Bemerkung“), Kürzel-Spalten ohne Antworten,
-  sonstiger Text in einer Kürzel-Spalte und Zeilen ohne Datum werden bei jeder Änderung aus der App unverändert zurückgeschrieben.
-  Eine Antwort aus der App ersetzt den Text in ihrer Zelle.
 - **`settings.json` von Hand ändern:** Ist die Datei danach kein gültiges JSON mehr, nutzt der Server sie nicht und überschreibt
   sie auch nicht. Die App meldet das beim Speichern; bis zur Reparatur gelten die Werte im jeweiligen Browser.
 - **Erste Einrichtung:** Als `admin` in Predigt-Schnitt ⚙ Einstellungen einmal Gemeinde, Prediger, Namensschema, Lautheit, Format und Cover
@@ -90,8 +86,6 @@ Auf dem NAS ist das `/volume1/docker/mischer/data/` (File Station: `docker` → 
   eingetragen werden; die Anmeldung selbst bleibt (sie liegt im Server-Cookie).
 - **Upload-Größe:** Der Server schreibt eine Datei beim Hochladen gleich auf die Platte (`data/tmp/`) und reicht sie dann an OpenCloud
   weiter. Grenze: `maxUploadMb` (Standard 150).
-- **`termine.xlsx` am NAS direkt bearbeiten** geht, aber wer genau dann antwortet, wenn die Datei gespeichert wird, kann überschrieben
-  werden. Sicherer: in der App herunterladen, bearbeiten, wieder hochladen.
 - Baut Portainer das Image nicht (Fehler „image not found“): auf dem NAS per SSH im geklonten Ordner `docker compose up -d --build`.
 - Meldet Portainer beim Aktualisieren „pull access denied for mischer-app“: Das Image gibt es nur lokal, nicht bei Docker Hub. Die
   Compose-Datei hat deshalb keinen `image:`-Namen (dann überspringt der Pull-Schritt es); bei einem älteren Stand `image:` entfernen
@@ -129,22 +123,27 @@ Auf dem NAS ist das `/volume1/docker/mischer/data/` (File Station: `docker` → 
 
 ## Termine
 
-**Die Termine sind die des Einsatzplans** (`Musik_Mischer_Beamer.xlsx` in OpenCloud, siehe [Einsatzplan](#einsatzplan-auf-der-startseite)):
-jeder Gottesdienst-Termin dort, ohne „kein eAg“. Die App legt keine Termine an und löscht keine; ein neuer Termin kommt in die Tabelle
-in OpenCloud. Je Termin zeigt die App Mischer, Beamer, Musikteam, Besonderheiten und Bemerkungen aus der Tabelle.
+**Termine und Antworten stehen im Einsatzplan in OpenCloud** (`Musik_Mischer_Beamer.xlsx`, siehe
+[Einsatzplan](#einsatzplan-auf-der-startseite)); die App hat keine eigene Tabelle. Jeder Gottesdienst-Termin dort (ohne „kein eAg“) ist
+ein Termin der App, mit Mischer, Beamer, Musikteam, Besonderheiten und Bemerkungen aus der Tabelle. Neue Termine kommen in die Tabelle.
 
-- Jede Person sagt mit ihrem Kürzel (oben eintragen, bleibt im Browser; Vorschläge aus der Legende der Tabelle) *Ja*, *Vielleicht* oder
-  *Nein*. Alle sehen, wer was geantwortet hat und wer noch offen ist; sagt der eingeteilte Mischer ab, wird das markiert.
-- **Admin:** ✎ neben dem Mischer trägt ihn in die Tabelle in OpenCloud ein (wie auf der Startseite); *✎ Bearbeiten* ergänzt Uhrzeit,
-  Anlass und Hinweise (nur in der App).
-- Die Antworten und Hinweise stehen in `data/termine.xlsx`, eine Zeile pro Datum, ab Spalte G eine Spalte pro Kürzel mit `Ja`,
-  `Vielleicht` oder `Nein`. Unter ⚙ Einstellungen lädt der Admin sie herunter oder ersetzt sie durch eine hochgeladene Fassung (der alte
-  Stand bleibt als `termine.backup.xlsx`). Zeilen zu Daten, die nicht (mehr) im Einsatzplan stehen, bleiben in der Datei, erscheinen
-  aber nicht. Die frühere Spalte „Eingeteilt“ wird nicht mehr angezeigt – es gilt der Mischer aus der Tabelle.
-- Die Datei darf auch direkt auf dem NAS bearbeitet werden; der Server liest sie bei jeder Anfrage neu. Verstanden werden
-  `j`/`n`/`?` als Antworten, Datumsfelder oder Text wie `25.10.2026` / `2026-10-25`. Die Spalten A–F müssen an ihrer Stelle bleiben.
-- Eine kaputte `termine.xlsx` wird nie überschrieben: Die App meldet dann einen Serverfehler, bis die Datei repariert oder gelöscht ist.
-- Gleichzeitige Antworten gehen nicht verloren: Der Server führt Änderungen nacheinander aus und schreibt die Datei atomar.
+- **Antworten:** Jede Person sagt mit ihrem Kürzel (oben eintragen, bleibt im Browser; Vorschläge und Name aus der Legende der Tabelle),
+  ob sie mischen kann. Der Server trägt das in der Zeile des Termins ein – nur diese Zellen, der Rest der Tabelle bleibt:
+
+  | Antwort | Eintrag |
+  | --- | --- |
+  | Ja | `JD` in „Mischer möglich“ |
+  | Vielleicht | `JD?` in „Mischer möglich“ |
+  | Nein | `JD` in „nicht möglich“ (die Spalte direkt nach „Mischer möglich“, nicht die des Beamers) |
+  | zurückgenommen | `JD` aus beiden entfernt |
+
+  Was dort schon steht (andere Kürzel, Text), bleibt erhalten; als Antwort zählen nur Kürzel in Großbuchstaben. Was jemand von Hand in
+  die Tabelle schreibt, zeigt die App genauso an.
+- Alle sehen, wer was geantwortet hat und wer noch offen ist; sagt der eingeteilte Mischer ab, wird das markiert.
+- **Admin:** ✎ neben dem Mischer trägt ihn in die Tabelle ein (wie auf der Startseite).
+- Ist die Tabelle gerade in OpenCloud zum Bearbeiten geöffnet oder OpenCloud nicht erreichbar, meldet die App, dass die Antwort nicht
+  eingetragen werden konnte. Gleichzeitige Antworten gehen nicht verloren (der Server schreibt nacheinander und prüft, ob die Tabelle
+  inzwischen geändert wurde). OpenCloud behält frühere Fassungen der Tabelle.
 - Angezeigt werden alle kommenden Termine, vergangene per „Ältere anzeigen“. Die Liste aktualisiert sich jede Minute.
 - Wer mit welchem Kürzel antwortet, wird nicht geprüft – gedacht für ein kleines, vertrautes Team.
 
@@ -232,8 +231,8 @@ cp config.example.json /tmp/mischer/config/config.json     # Passwörter eintrag
 docker run --rm -p 9120:8080 -v /tmp/mischer/config:/config:ro -v /tmp/mischer/data:/data mischer-app
 ```
 
-Die API (alle unter `/api`, Anmeldung per Cookie): `POST login` / `logout`, `GET me`, `GET`/`POST termine` (POST: `vote` für alle, `update` für den Admin; nur Daten aus dem Einsatzplan),
-`GET termine/export` und `POST termine/import` (Admin), `GET plan` (auch ohne Anmeldung, dann gekürzt; `source`: `OpenCloud`/`NAS`,
+Die API (alle unter `/api`, Anmeldung per Cookie): `POST login` / `logout`, `GET me`, `POST termine` (`{ "date", "sign", "answer": "yes"|"maybe"|"no"|null }`: Antwort in den Einsatzplan, nur dessen Daten),
+`GET plan` (auch ohne Anmeldung, dann gekürzt – ohne Namen, Bemerkungen und Antworten; `source`: `OpenCloud`/`NAS`,
 `syncError`), `POST plan/import` (Admin, die xlsx als Body; `409`, wenn der Plan aus OpenCloud kommt), `POST plan/refresh` (Admin),
 `POST plan/mischer` (Admin, `{ "date": "2026-11-01", "mischer": "JD" }`; `404` Datum fehlt, `409` gleichzeitig geändert, `423` gesperrt),
 `GET overview?date=2026-11-01` (eAg-Übersicht: `series`, `index`, `preacher`), `GET`/`PUT settings/<app>` (PUT: Admin), `POST upload?name=<datei>.mp3` (veröffentlicht die MP3 aus dem Body, `Content-Type: audio/mpeg`), `GET published?name=<datei>.mp3` (`{ "exists": … }`, für alle Angemeldeten),
@@ -359,10 +358,10 @@ falls gerade keine echte zur Hand ist.
 
 ```
 index.html, src/home.ts      Startseite: Einsatzplan und Kacheln aus apps.json
-packages/plan/               Einsatzplan aus der Excel-Tabelle der Gemeinde lesen
+packages/plan/               Einsatzplan aus der Excel-Tabelle der Gemeinde lesen (mit den Antworten), assign.ts: Mischer eintragen, cells.ts: Zellwerte
 apps/predigt-schnitt/        Predigt-Schnitt (Schritte unter src/steps/, src/overview.ts: eAg-Übersicht, src/cover/: Standard-Cover)
 apps/predigt-nachbearbeiten/ Predigt nachbearbeiten (nur Admin; nutzt die Bausteine von Predigt-Schnitt)
-apps/termine/                Termine (src/model.ts: Datenmodell, src/xlsx.ts: Excel-Tabelle, src/api.ts: Zugriff auf den Server)
+apps/termine/                Termine (src/model.ts: Antworten, src/api.ts: Einsatzplan und Antworten vom/zum Server)
 packages/audio-core/         Decoder, Frame-Index, Merkmale, Erkennung, Lautheit, DSP, Pipeline, Worker
 packages/denoise/            Hall-/Rauschreduzierung: df3.wasm (DeepFilterNet3 mit Modell) und Wrapper;
                              wasm/ ist der Rust-Quelltext, neu bauen mit wasm/build.sh (nur nach Änderungen nötig)
