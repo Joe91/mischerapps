@@ -31,6 +31,7 @@ function describeCloudError(b: string): string {
   if (b === 'cloud 404') return 'Der Ordner in OpenCloud wurde nicht gefunden (gelöscht oder nicht mehr freigegeben?). Bitte dem Admin Bescheid geben.';
   if (b === 'cloud 403') return 'OpenCloud erlaubt dem Server das Schreiben in den Ordner nicht (Freigabe nur zum Lesen?). Bitte dem Admin Bescheid geben.';
   if (b === 'cloud 507') return 'Der Speicherplatz in OpenCloud ist voll.';
+  if (b === 'cloud 423') return 'Die Datei ist in OpenCloud gerade gesperrt (dort zum Bearbeiten geöffnet?). Bitte später noch einmal versuchen.';
   if (b.startsWith('cloud unreachable')) return 'OpenCloud ist gerade nicht erreichbar. Bitte später noch einmal hochladen (die Datei vorher herunterladen).';
   return `OpenCloud hat die Datei nicht angenommen${b ? ` (${b})` : ''}.`;
 }

@@ -3,7 +3,8 @@ import { tagMp3, type Tags } from '../../../../packages/audio-core/tags';
 import { choices, processOptions, STEP, type Ctx, type Step } from '../context';
 import { EXPORT_PRESETS, LOUDNESS_PRESETS, coverUrl } from '../settings';
 import { buildFileName, sanitizeFileName } from '../naming';
-import { fetchOverview, seriesTitle } from '../overview';
+import { fetchOverview } from '../overview';
+import { autoTags, commentFor } from '../tagging';
 import { createAdvancedPanel, createPrepareView } from './prepare';
 
 async function coverFromDataUrl(dataUrl: string): Promise<Tags['cover']> {
@@ -36,22 +37,23 @@ export function createExportStep(ctx: Ctx): Step {
   const overviewHint = h('p', { class: 'muted small overview-hint' });
 
   /**
-   * Series, its number and preacher for the date from the eAg-Übersicht: fills title ("Zeit - 04"), album and
-   * preacher, unless typed in by hand. A date without entry brings back the defaults.
+   * Title, album, preacher and number for the date, from the eAg-Übersicht (rules in tagging.ts): "Zeit - 04",
+   * without series "Predigt vom 18.10.2026". Fields typed in by hand stay as they are.
    */
   let lookups = 0;
   async function fromOverview() {
     const n = ++lookups, day = st.meta.date;
     const o = await fetchOverview(day);
     if (n !== lookups || day !== st.meta.date) return;
-    if (o === 'unavailable') { overviewHint.textContent = ''; return; }
+    const auto = autoTags(s, day, o === 'unavailable' ? null : o);
     const set = (key: Exclude<TextKey, 'date'>, value: string) => { if (!st.metaEdited.has(key)) st.meta[key] = value; };
-    st.meta.series = o?.series ?? '';
-    st.meta.track = o?.series ? o.index : 0;
-    set('title', o?.series ? seriesTitle(o) : s.titlePrefix);
-    set('album', o?.series || s.congregation);
-    set('preacher', o?.preacher || s.preacher);
-    overviewHint.textContent = !o ? 'Für dieses Datum steht nichts in der eAg-Übersicht.'
+    st.meta.series = auto.series;
+    st.meta.track = auto.track;
+    set('title', auto.title);
+    set('album', auto.album);
+    set('preacher', auto.artist);
+    overviewHint.textContent = o === 'unavailable' ? ''
+      : !o ? 'Für dieses Datum steht nichts in der eAg-Übersicht.'
       : 'Aus der eAg-Übersicht: ' + [o.series ? `Reihe „${o.series}“, ${o.index}. Predigt` : 'keine Predigtreihe', o.preacher && `Prediger/in ${o.preacher}`].filter(Boolean).join(' · ');
     title.input.value = st.meta.title; album.input.value = st.meta.album; preacher.input.value = st.meta.preacher;
     updateName();
@@ -113,8 +115,11 @@ export function createExportStep(ctx: Ctx): Step {
     title: st.meta.title.trim() || undefined,
     artist: st.meta.preacher.trim() || undefined,
     album: st.meta.album.trim() || undefined,
+    albumArtist: s.albumArtist.trim() || undefined,
+    genre: s.genre.trim() || undefined,
+    date: st.meta.date || undefined,
     year: Number(st.meta.date.slice(0, 4)) || undefined,
-    comment: [st.meta.scripture.trim(), st.meta.date].filter(Boolean).join(' · ') || undefined,
+    comment: commentFor(st.meta.scripture, st.meta.date) || undefined,
     track: st.meta.track || undefined,
   });
   const renderKey = () => JSON.stringify({ o: processOptions(ctx), p: choices(ctx).exportPreset, t: tags(), c: coverUrl(s).length });

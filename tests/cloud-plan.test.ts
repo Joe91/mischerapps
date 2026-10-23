@@ -18,7 +18,7 @@ const day = (iso: string) => ({ value: new Date(`${iso}T00:00:00Z`), format: 'dd
 /** Files in OpenCloud as WebDAV serves them: version tags, PUT only with the current one (If-Match), locks. */
 function fakeCloud() {
   const files = new Map<string, { data: Uint8Array; version: number }>();
-  const state = { down: false, locked: false, puts: 0, beforePut: null as null | ((path: string) => void) };
+  const state = { down: false, locked: false, puts: 0, beforePut: null as null | ((path: string) => void), propfindDown: false };
   const etag = (path: string) => `"v${files.get(path)?.version}"`;
   const body = async (req: IncomingMessage) => { const c: Buffer[] = []; for await (const x of req) c.push(x as Buffer); return new Uint8Array(Buffer.concat(c)); };
   const server = createServer(async (req, res) => {
@@ -28,6 +28,7 @@ function fakeCloud() {
     const file = files.get(path);
     if (req.method === 'PROPFIND') {
       await body(req);
+      if (state.propfindDown) { res.statusCode = 503; res.end(); return; }
       if (!file) { res.statusCode = 404; res.end(); return; }
       res.statusCode = 207;
       res.end(`<d:multistatus xmlns:d="DAV:"><d:response><d:href>${req.url}</d:href><d:propstat><d:prop><d:getetag>${etag(path)}</d:getetag>` +
@@ -118,6 +119,15 @@ describe('Einsatzplan and eAg-Übersicht in OpenCloud', () => {
     const entries = await cloudPlan();
     expect(entries.find(e => e.date === '2026-11-01')?.mischer).toBe('KL'); // the other change survived
     expect(entries.find(e => e.date === '2026-11-15')?.mischer).toBe('AS');
+  });
+
+  it('counts an assignment as done even if reading the plan back fails', async () => {
+    cloud.state.propfindDown = true;
+    expect((await assign(admin, '2026-11-29', 'MS')).status).toBe(204);
+    cloud.state.propfindDown = false;
+    expect((await cloudPlan()).find(e => e.date === '2026-11-29')?.mischer).toBe('MS');
+    await fetch(`${base}/api/plan/refresh`, { method: 'POST', headers: { Cookie: admin } });
+    expect((await getPlan()).entries.find((e: { date: string }) => e.date === '2026-11-29').mischer).toBe('MS');
   });
 
   it('reports a locked file and an unreachable cloud, showing the last copy meanwhile', async () => {

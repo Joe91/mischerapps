@@ -6,7 +6,12 @@ export interface Tags {
   title?: string;
   artist?: string;
   album?: string;
+  /** "Album-Interpret" (TPE2): groups all sermons in players */
+  albumArtist?: string;
+  genre?: string;
   year?: number;
+  /** YYYY-MM-DD, written as year (TYER) and day (TDAT) */
+  date?: string;
   comment?: string;
   /** number within the album (the sermon series) */
   track?: number;
@@ -18,7 +23,13 @@ export function tagMp3(mp3: Uint8Array, t: Tags): Uint8Array {
   if (t.title) w.setFrame('TIT2', t.title);
   if (t.artist) w.setFrame('TPE1', [t.artist]);
   if (t.album) w.setFrame('TALB', t.album);
-  if (t.year) w.setFrame('TYER', t.year);
+  if (t.albumArtist) w.setFrame('TPE2', t.albumArtist);
+  if (t.genre) w.setFrame('TCON', [t.genre]);
+  const day = /^(\d{4})-(\d{2})-(\d{2})$/.exec(t.date ?? '');
+  if (day) {
+    w.setFrame('TYER', Number(day[1]));
+    w.setFrame('TDAT', day[3] + day[2]); // DDMM
+  } else if (t.year) w.setFrame('TYER', t.year);
   if (t.comment) w.setFrame('COMM', { description: '', text: t.comment, language: 'deu' });
   if (t.track) w.setFrame('TRCK', String(t.track));
   if (t.cover) w.setFrame('APIC', { type: 3, data: t.cover.data, description: 'Cover' });
@@ -51,7 +62,7 @@ export function id3Length(head: Uint8Array): number {
 }
 
 /**
- * Reads the tags tagMp3 writes (title, artist, album, year, comment, track, cover) from an ID3v2.3/2.4 tag at
+ * Reads the tags tagMp3 writes (title, artist, album, album artist, genre, year/date, comment, track, cover) from an ID3v2.3/2.4 tag at
  * the start of an MP3. Other frames, ID3v1 and unusual tags (unsynchronised, compressed) are ignored.
  */
 export function readTags(file: Uint8Array): Tags {
@@ -65,7 +76,7 @@ export function readTags(file: Uint8Array): Tags {
   let pos = 10;
   if (flags & 0x40) pos += version === 4 ? synchsafe(10) : 4 + u32(10); // extended header
 
-  let comment: string | undefined, cover: Tags['cover'] | undefined;
+  let comment: string | undefined, cover: Tags['cover'] | undefined, ddmm = '';
   while (pos + 10 <= end) {
     const id = String.fromCharCode(...file.subarray(pos, pos + 4));
     if (!/^[A-Z0-9]{4}$/.test(id)) break; // padding
@@ -78,7 +89,14 @@ export function readTags(file: Uint8Array): Tags {
     if (id === 'TIT2') t.title = decodeText(enc, b.subarray(1));
     else if (id === 'TPE1') t.artist = decodeText(enc, b.subarray(1));
     else if (id === 'TALB') t.album = decodeText(enc, b.subarray(1));
-    else if (id === 'TYER' || id === 'TDRC') t.year = Number(decodeText(enc, b.subarray(1)).slice(0, 4)) || undefined;
+    else if (id === 'TPE2') t.albumArtist = decodeText(enc, b.subarray(1));
+    else if (id === 'TCON') t.genre = decodeText(enc, b.subarray(1)).replace(/^\(\d+\)/, '') || undefined; // "(101)Speech"
+    else if (id === 'TDAT') ddmm = decodeText(enc, b.subarray(1));
+    else if (id === 'TYER' || id === 'TDRC') {
+      const v = decodeText(enc, b.subarray(1));
+      t.year = Number(v.slice(0, 4)) || undefined;
+      if (/^\d{4}-\d{2}-\d{2}/.test(v)) t.date = v.slice(0, 10); // ID3v2.4: full date in TDRC
+    }
     else if (id === 'TRCK') t.track = parseInt(decodeText(enc, b.subarray(1)), 10) || undefined; // "4" or "4/8"
     else if (id === 'COMM') {
       // language (3 bytes), description, text; prefer the comment without description (the one tagMp3 writes)
@@ -94,7 +112,8 @@ export function readTags(file: Uint8Array): Tags {
     }
   }
   if (comment) t.comment = comment;
+  if (t.year && /^\d{4}$/.test(ddmm)) t.date = `${t.year}-${ddmm.slice(2)}-${ddmm.slice(0, 2)}`;
   if (cover) t.cover = cover;
-  for (const k of ['title', 'artist', 'album'] as const) if (!t[k]) delete t[k];
+  for (const k of ['title', 'artist', 'album', 'albumArtist', 'genre'] as const) if (!t[k]) delete t[k];
   return t;
 }

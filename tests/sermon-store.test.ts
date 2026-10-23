@@ -144,8 +144,16 @@ describe('WebDavStore and the API with OpenCloud', () => {
     await new Promise<void>(r => srv.listen(0, '127.0.0.1', r));
     const b = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
     const login = await fetch(`${b}/api/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user: 'mischer', password: 'mischer-password' }) });
-    const res = await fetch(`${b}/api/upload?name=x.mp3`, { method: 'POST', headers: { Cookie: (login.headers.get('set-cookie') ?? '').split(';')[0], 'Content-Type': 'audio/mpeg' }, body: 'ID3 x' });
+    const cookie = (login.headers.get('set-cookie') ?? '').split(';')[0];
+    const res = await fetch(`${b}/api/upload?name=x.mp3`, { method: 'POST', headers: { Cookie: cookie, 'Content-Type': 'audio/mpeg' }, body: 'ID3 x' });
     expect([res.status, await res.text()]).toEqual([502, 'cloud 401']);
+    // refused before the upload arrived (Node discards the rest): the answer still comes through, the connection stays usable
+    const big = new Uint8Array(900 * 1024).fill(0x41);
+    big.set([0x49, 0x44, 0x33]);
+    for (let i = 0; i < 2; i++) {
+      const again = await fetch(`${b}/api/upload?name=x.mp3`, { method: 'POST', headers: { Cookie: cookie, 'Content-Type': 'audio/mpeg' }, body: big });
+      expect([again.status, await again.text()]).toEqual([502, 'cloud 401']);
+    }
     srv.close();
   });
 });

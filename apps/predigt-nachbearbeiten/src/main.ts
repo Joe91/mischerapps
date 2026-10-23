@@ -16,7 +16,8 @@ import { LOUDNESS_PRESETS, coverUrl, normalizeSettings, settingsStore, upgradeSt
 import { choices, type AppState, type Ctx } from '../../predigt-schnitt/src/context';
 import { createAdvancedPanel, createPrepareView } from '../../predigt-schnitt/src/steps/prepare';
 import { isValidFileName, sanitizeFileName } from '../../predigt-schnitt/src/naming';
-import { dateFromFileName, fetchOverview, seriesTitle } from '../../predigt-schnitt/src/overview';
+import { dateFromFileName, fetchOverview, type OverviewEntry } from '../../predigt-schnitt/src/overview';
+import { germanDate, reprocessTags, type TagMode } from '../../predigt-schnitt/src/tagging';
 
 /** An entry of GET /api/uploads; `original`: replaced before, the first version is kept on the server. */
 interface Published { name: string; size: number; modified: string; original: boolean; }
@@ -27,10 +28,15 @@ interface LocalFile { file: File; target: string; state: 'waiting' | 'running' |
 type Source = { published: Published; fromOriginal: boolean } | { local: LocalFile };
 
 /**
- * `tagsFromPublished`: the local file had no tags, they come from the file it replaces; `tagsFromOverview`: missing
- * details were filled in from the eAg-Übersicht (date from the file name)
+ * `fileTags`: as read (for a local file without tags: those of the published file it replaces, `tagsFromPublished`);
+ * `tags`: what will be written, by the tag rules (tagging.ts) with the eAg-Übersicht's entry for `day` – the date in
+ * the file name.
  */
-interface Loaded { src: Source; target: string; size: number; tags: Tags; tagsFromPublished: boolean; tagsFromOverview: boolean; }
+interface Loaded {
+  src: Source; target: string; size: number;
+  fileTags: Tags; tagsFromPublished: boolean; day: string | null; overview: OverviewEntry | null | 'unavailable';
+  tags: Tags;
+}
 
 const ACCEPT = '.mp3,.wav,audio/mpeg,audio/wav,audio/x-wav,audio/wave';
 const isAudio = (f: File) => /\.(mp3|wav)$/i.test(f.name) || /^audio\/(mpeg|wav|x-wav|wave)$/.test(f.type);
@@ -276,8 +282,9 @@ if (!isAdmin()) {
         tags = await publishedTags(target).catch(() => ({}));
         tagsFromPublished = Object.keys(tags).length > 0;
       }
-      const filled = await fillFromOverview(tags, target);
-      loaded = { src, target, size: file.size, tags: filled.tags, tagsFromPublished, tagsFromOverview: filled.used };
+      const day = dateFromFileName(target);
+      const overview = day ? await fetchOverview(day) : null;
+      loaded = { src, target, size: file.size, fileTags: tags, tagsFromPublished, day, overview, tags: tagsFor(tags, day, overview) };
       loadStatus.replaceChildren();
       showEditor();
       return true;
@@ -290,28 +297,10 @@ if (!isAdmin()) {
     }
   }
 
-  /**
-   * Older sermons have no tags: series ("Zeit - 04" as title, album, number) and preacher come from the
-   * eAg-Übersicht, by the date in the file name (predigt-eag-260628). Only missing details are filled in.
-   */
-  async function fillFromOverview(tags: Tags, name: string): Promise<{ tags: Tags; used: boolean }> {
-    const day = dateFromFileName(name);
-    if (!day || (tags.title && tags.artist && tags.album && tags.track)) return { tags, used: false };
-    const o = await fetchOverview(day);
-    if (!o || o === 'unavailable' || (!o.series && !o.preacher)) return { tags, used: false };
-    return {
-      used: true,
-      tags: {
-        ...tags,
-        title: tags.title || (o.series ? seriesTitle(o) : undefined),
-        artist: tags.artist || o.preacher || undefined,
-        album: tags.album || o.series || undefined,
-        track: tags.track || (o.series ? o.index : undefined),
-        year: tags.year || Number(day.slice(0, 4)),
-        comment: tags.comment || day,
-      },
-    };
-  }
+  /** The tags to write: as in the export ("auto"), or the file's own with gaps filled ("keep"); see tagging.ts. */
+  let tagMode: TagMode = 'auto';
+  const tagsFor = (file: Tags, day: string | null, o: Loaded['overview']) =>
+    ({ ...reprocessTags(file, settings, day, o === 'unavailable' ? null : o, tagMode), cover: file.cover });
 
   // ---- 2 · processing options (for every file on this page) ----
 
@@ -319,7 +308,15 @@ if (!isAdmin()) {
   const prepare = createPrepareView(ctx);
   const advanced = createAdvancedPanel(ctx, null, () => { resultStale(); if (loaded) prepare.start(); },
     'Gilt für alle Dateien auf dieser Seite. Die Standardwerte von Predigt-Schnitt bleiben unverändert.');
-  const optionsSet = h('fieldset', { class: 'plain' }, advanced.el);
+  const tagModeSelect = h('select', null,
+    h('option', { value: 'auto' }, 'automatisch – wie beim Export (eAg-Übersicht, Album-Interpret, Genre)'),
+    h('option', { value: 'keep' }, 'aus der Datei übernehmen, nur Fehlendes ergänzen'));
+  tagModeSelect.addEventListener('change', () => {
+    tagMode = tagModeSelect.value as TagMode;
+    if (loaded) { loaded.tags = tagsFor(loaded.fileTags, loaded.day, loaded.overview); showTags(); resultStale(); }
+  });
+  const optionsSet = h('fieldset', { class: 'plain' }, advanced.el,
+    h('label', { class: 'tag-mode' }, 'Angaben der MP3 (Titel, Prediger/in, Album …)', tagModeSelect));
 
   // ---- 3 · the loaded file ----
 
@@ -333,9 +330,11 @@ if (!isAdmin()) {
     return { input, el: h('label', null, label, input) };
   };
   const title = tagField('Titel'), artist = tagField('Prediger/in'), album = tagField('Album (Predigtreihe)');
-  const year = tagField('Jahr', { type: 'number', min: 1900, max: 2100, inputmode: 'numeric' });
   const track = tagField('Nr. in der Reihe', { type: 'number', min: 1, max: 999, inputmode: 'numeric' });
-  const comment = tagField('Kommentar', { placeholder: 'z. B. Lk 18,1-8 · 2026-10-18' });
+  const albumArtist = tagField('Album-Interpret'), genre = tagField('Genre');
+  const date = tagField('Datum', { type: 'date' });
+  const comment = tagField('Kommentar', { placeholder: 'z. B. Lk 18,1-8 · 18.10.2026' });
+  const tagInfo = h('span');
   const newCover = h('input', { type: 'checkbox' });
   const coverHint = h('small');
   const coverRow = h('label', { class: 'check-hint cover-row' }, newCover, h('span', null, settings.coverDataUrl ? 'Cover aus den Einstellungen verwenden' : 'eAg-Cover verwenden'), coverHint);
@@ -351,10 +350,25 @@ if (!isAdmin()) {
     title: title.input.value.trim() || undefined,
     artist: artist.input.value.trim() || undefined,
     album: album.input.value.trim() || undefined,
-    year: Number(year.input.value) || undefined,
+    albumArtist: albumArtist.input.value.trim() || undefined,
+    genre: genre.input.value.trim() || undefined,
+    date: date.input.value || undefined,
+    year: Number(date.input.value.slice(0, 4)) || loaded?.tags.year,
     comment: comment.input.value.trim() || undefined,
     track: Number(track.input.value) || undefined,
   });
+
+  /** The tag fields and where their values come from. */
+  function showTags() {
+    const l = loaded!, t = l.tags, o = l.overview;
+    title.input.value = t.title ?? ''; artist.input.value = t.artist ?? ''; album.input.value = t.album ?? '';
+    track.input.value = t.track ? String(t.track) : ''; albumArtist.input.value = t.albumArtist ?? ''; genre.input.value = t.genre ?? '';
+    date.input.value = t.date ?? ''; comment.input.value = t.comment ?? '';
+    tagInfo.textContent = tagMode === 'keep' ? '· Angaben aus der Datei, Fehlendes ergänzt'
+      : !l.day ? '· kein Datum im Dateinamen – Angaben aus der Datei'
+      : o === 'unavailable' ? ''
+      : o ? `· Angaben aus der eAg-Übersicht vom ${germanDate(l.day)}` : `· ${germanDate(l.day)} steht nicht in der eAg-Übersicht`;
+  }
 
   const createBtn = h('button', { class: 'btn btn-primary', type: 'button', onclick: () => create().catch(noop) }, 'MP3 erstellen');
   const status = h('div');
@@ -392,11 +406,9 @@ if (!isAdmin()) {
       h('span', null, `Vom Rechner: ${src.local.file.name} · ${size}`),
       h('span', null, findPublished(l.target) ? `· ersetzt die gleichnamige Datei ${inT}` : `· wird neu ${inT} veröffentlicht`),
       l.tagsFromPublished ? h('span', null, `· Titel, Prediger und Cover von der Datei ${inT} übernommen`) : '',
-      l.tagsFromOverview ? h('span', null, '· fehlende Angaben aus der eAg-Übersicht (Datum aus dem Dateinamen)') : '',
-    ]);
+    ], tagInfo);
     before.src = st.audioUrl!;
-    title.input.value = t.title ?? ''; artist.input.value = t.artist ?? ''; album.input.value = t.album ?? '';
-    year.input.value = t.year ? String(t.year) : ''; comment.input.value = t.comment ?? ''; track.input.value = t.track ? String(t.track) : '';
+    showTags();
     newCover.checked = !t.cover;
     showCover();
     status.replaceChildren();
@@ -533,7 +545,7 @@ if (!isAdmin()) {
   const editorSet = h('fieldset', { class: 'plain' },
     source,
     h('div', { class: 'listen' }, h('span', { class: 'muted small' }, 'Vorher'), before),
-    h('div', { class: 'grid tag-grid' }, title.el, artist.el, album.el, track.el, year.el, comment.el),
+    h('div', { class: 'grid tag-grid' }, title.el, artist.el, album.el, track.el, albumArtist.el, genre.el, date.el, comment.el),
     coverRow,
     prepare.el,
     prepare.details,

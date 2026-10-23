@@ -23,3 +23,4 @@ fieldset.plain { border: 0; padding: 0; margin: 0; min-width: 0; }
 .listen audio { width: 100%; }
 .tag-grid { margin-top: 1rem; }
 .cover-row { margin-top: .8rem; }
+.tag-mode { margin-top: 1rem; max-width: 34rem; }

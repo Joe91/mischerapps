@@ -37,7 +37,11 @@ export interface Settings {
   fadeOut: number;
   maxGainDb: number;
   namePattern: string;
+  /** album of sermons without series (empty: the album artist) */
   congregation: string;
+  /** "Album-Interpret" of every MP3, e.g. "Predigt eAg" */
+  albumArtist: string;
+  genre: string;
   preacher: string;
   titlePrefix: string;
   coverDataUrl: string;
@@ -64,6 +68,8 @@ export function defaultSettings(): Settings {
     maxGainDb: 55, // desk recordings can be very quiet (−52 LUFS); the denoiser keeps the lifted noise down
     namePattern: 'predigt-eag-{jjmmdd}',
     congregation: '',
+    albumArtist: 'Predigt eAg',
+    genre: 'Predigt',
     preacher: '',
     titlePrefix: 'Predigt',
     coverDataUrl: '',
@@ -115,7 +121,7 @@ export const settingsStore = createStore<Settings>('audio-tools.predigt-schnitt.
 /** Keys the admin sets for everybody; they live on the server. */
 export const SHARED_KEYS = [
   'loudnessPreset', 'exportPreset', 'highpass', 'compressor', 'denoise', 'denoiseDb', 'fadeIn', 'fadeOut', 'maxGainDb', 'namePattern',
-  'congregation', 'preacher', 'titlePrefix', 'coverDataUrl', 'minSermonMin', 'mergeGapSec', 'rev',
+  'congregation', 'albumArtist', 'genre', 'preacher', 'titlePrefix', 'coverDataUrl', 'minSermonMin', 'mergeGapSec', 'rev',
 ] as const satisfies readonly (keyof Settings)[];
 
 export const sharedPart = (s: Settings) => Object.fromEntries(SHARED_KEYS.map(k => [k, s[k]]));

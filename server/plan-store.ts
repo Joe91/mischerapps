@@ -68,6 +68,7 @@ export class PlanStore {
   private async keep(data: Uint8Array, modified: string) {
     await readPlanXlsx(new Blob([data as Uint8Array<ArrayBuffer>]));
     await writeAtomic(this.file, data);
+    this.cache = null; // two versions may share size and (whole-second) time
     if (modified) await utimes(this.file, new Date(modified), new Date(modified)); // "Stand" = last change in OpenCloud
   }
 
@@ -129,7 +130,8 @@ export class PlanStore {
           if (!(e instanceof StoreError && e.message === 'changed') || attempt > 0) throw e;
         }
       }
-      await this.cloud.get(true);
+      // shown at once; a failure to read it back is no failure of the assignment (it is reported like any other)
+      await this.sync(true);
     });
   }
 }

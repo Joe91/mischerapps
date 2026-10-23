@@ -186,17 +186,33 @@ Gelesen wird nur das **erste Blatt**: Die Spalten werden an ihrer Überschrift e
 Aus der Tabelle `eAg_Übersicht.xlsx` in OpenCloud (`cloud.overview`, ein Blatt pro Jahr) liest der Server je Termin **Spalte A**
 (Datum), **G** (Predigtreihe) und **K** (Prediger/in). Daraus füllt der Export die Angaben vor, sobald das Datum feststeht:
 
-- **Titel** „Reihe - Nr.“, z. B. `Zeit - 04` (die wievielte Predigt der Reihe, nach Datum gezählt; kommt ein Reihenname nach mehr als
-  zwei Monaten wieder, zählt er neu ab 1), **Album** = Predigtreihe, **Prediger/in**, und die Nummer als Track-Nummer der MP3.
+- die Angaben der MP3 nach der Tabelle unten; die Nummer ist die wievielte Predigt der Reihe, nach Datum gezählt (kommt ein
+  Reihenname nach mehr als zwei Monaten wieder, zählt er neu ab 1).
 - Was von Hand eingetragen wurde, bleibt; ohne Eintrag für das Datum gelten die Vorgaben aus den Einstellungen.
 - Ein Datum zählt aus dem Blatt seines Jahres (die Blätter überschneiden sich am Jahreswechsel); gibt es kein solches Blatt, aus dem
   vorigen. Der Server fragt alle fünf Minuten nach Änderungen.
 - Im Namensschema gibt es dafür `{reihe}` und `{nr}`.
-- *Predigt nachbearbeiten* ergänzt bei Dateien ohne Angaben (ältere Predigten) die fehlenden aus der Übersicht, mit dem Datum aus dem
-  Dateinamen (`predigt-eag-260628` → 28.06.2026) – auch beim Stapel.
+- *Predigt nachbearbeiten* setzt die Angaben nach denselben Regeln, mit dem Datum aus dem Dateinamen (`predigt-eag-260628` →
+  28.06.2026) – auch beim Stapel (siehe dort, *Angaben der MP3*).
 
-**Cover:** Ohne eigenes Bild in den Einstellungen bekommt jede MP3 das eAg-Logo als Cover (1400 × 1400 px,
-`apps/predigt-schnitt/src/cover/`, neu erzeugen mit `scripts/make-cover.sh`).
+### Angaben der MP3
+
+Dieselben Regeln beim Export und beim Nachbearbeiten (`apps/predigt-schnitt/src/tagging.ts`):
+
+| Angabe (ID3) | Inhalt | Woher |
+| --- | --- | --- |
+| Titel (TIT2) | `Zeit - 04`; ohne Predigtreihe `Predigt vom 18.10.2026` | eAg-Übersicht (Reihe und Nr.); „Titel ohne Predigtreihe“ in den Einstellungen |
+| Interpret (TPE1) | Prediger/in | eAg-Übersicht, Spalte K; sonst die Vorgabe aus den Einstellungen |
+| Album-Interpret (TPE2) | `Predigt eAg` | Einstellungen – fasst alle Predigten in Playern und Podcast-Apps zusammen |
+| Album (TALB) | Predigtreihe, z. B. `Zeit`; ohne Reihe `Predigt eAg` | eAg-Übersicht, Spalte G; sonst „Album ohne Predigtreihe“ bzw. der Album-Interpret |
+| Track (TRCK) | Nummer in der Reihe | aus den Daten der eAg-Übersicht gezählt |
+| Genre (TCON) | `Predigt` | Einstellungen |
+| Jahr, Datum (TYER, TDAT) | 2026, 18.10. | Datum des Gottesdienstes |
+| Kommentar (COMM) | `Lk 18,1-8 · 18.10.2026` | Bibelstelle (im Export eingetragen) und Datum |
+| Cover (APIC) | eAg-Logo, 1400 × 1400 px | eigenes Bild aus den Einstellungen, sonst `apps/predigt-schnitt/src/cover/` (neu erzeugen mit `scripts/make-cover.sh`) |
+
+Album-Interpret, Genre, „Titel ohne Predigtreihe“, „Album ohne Predigtreihe“ und die Prediger-Vorgabe stellt der Admin in
+Predigt-Schnitt unter ⚙ Einstellungen → *Dateiname & Tags* ein.
 
 ## Lokal entwickeln
 
@@ -282,11 +298,14 @@ Die Kachel sieht nur der Admin; der Server lässt nur ihn zu.
      Veröffentlicht wird unter dem Dateinamen, bereinigt (`predigt-eag-261018(1).mp3` → `predigt-eag-261018-1.mp3`).
 2. **Bearbeitung** – Lautheit, Format, Ein-/Ausblenden, Hochpass, Kompression, Hall & Rauschen für alle Dateien auf der Seite.
    Voreingestellt sind die Standardwerte von Predigt-Schnitt (auch 0,5 s Ein- und Ausblenden); Änderungen gelten nur hier,
-   die Standardwerte bleiben unverändert.
-3. **Datei** – die ganze Datei (kein Schnitt). Titel, Prediger/in, Album, Nr. in der Reihe, Jahr, Kommentar und Cover werden aus
-   der Datei übernommen und können geändert werden; Dateien ohne Cover bekommen das eAg-Cover (bzw. das aus den Einstellungen).
-   Hat eine Datei vom Rechner keine Tags, kommen sie von der gleichnamigen veröffentlichten Datei; fehlt dann noch etwas, aus der
-   eAg-Übersicht (Datum aus dem Dateinamen). Die Berechnung startet sofort im Hintergrund
+   die Standardwerte bleiben unverändert. Dazu **Angaben der MP3**:
+   - *automatisch* (Standard): wie beim Export ([Angaben der MP3](#angaben-der-mp3)) mit dem Datum aus dem Dateinamen – was die
+     eAg-Übersicht weiß, gilt; die Datei behält ihre eigenen Angaben nur, wo dort nichts steht (ein bloßes „Predigt“ als Titel zählt
+     nicht); Album-Interpret und Genre aus den Einstellungen.
+   - *aus der Datei übernehmen*: die Angaben der Datei bleiben, nur fehlende werden ergänzt.
+3. **Datei** – die ganze Datei (kein Schnitt). Titel, Prediger/in, Album, Nr. in der Reihe, Album-Interpret, Genre, Datum und
+   Kommentar stehen nach Schritt 2 in den Feldern und können geändert werden; Dateien ohne Cover bekommen das eAg-Cover (bzw. das aus
+   den Einstellungen). Hat eine Datei vom Rechner keine Tags, gelten die der gleichnamigen veröffentlichten Datei als ihre eigenen. Die Berechnung startet sofort im Hintergrund
    (15 min Predigt ≈ 45 s, 26 min ≈ 75 s auf einem 12-Kern-PC, mit Entrauschen). *MP3 erstellen*, vorher/nachher anhören, dann
    veröffentlichen oder herunterladen.
 
