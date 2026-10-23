@@ -129,31 +129,24 @@ Auf dem NAS ist das `/volume1/docker/mischer/data/` (File Station: `docker` → 
 
 ## Termine
 
-Eine Zeile pro Termin in `data/termine.xlsx`, ab Spalte G eine Spalte pro Kürzel (Überschrift = Kürzel) mit `Ja`, `Vielleicht`
-oder `Nein`:
+**Die Termine sind die des Einsatzplans** (`Musik_Mischer_Beamer.xlsx` in OpenCloud, siehe [Einsatzplan](#einsatzplan-auf-der-startseite)):
+jeder Gottesdienst-Termin dort, ohne „kein eAg“. Die App legt keine Termine an und löscht keine; ein neuer Termin kommt in die Tabelle
+in OpenCloud. Je Termin zeigt die App Mischer, Beamer, Musikteam, Besonderheiten und Bemerkungen aus der Tabelle.
 
-| Datum | Wochentag | Uhrzeit | Anlass | Eingeteilt | Hinweis | JD | MK |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| 25.10.2026 | Sonntag | 10:00 | Abendmahl | JD, MK | … | Ja | Vielleicht |
-
-- **Die Zeilen der Tabelle sind die Termine der App.** Es gibt keine automatisch erzeugten Sonntage: Was nicht in der Tabelle steht,
-  erscheint nicht – und beantwortet werden kann nur, was dort steht. Eine Zeile mit nur einem Datum genügt.
-- **Termine auswählen:** *Einstellungen → Termine (Excel) → ⬇ Vorlage mit allen Sonntagen* lädt eine Tabelle mit den bisherigen Terminen
-  (samt Antworten) und den nächsten 52 Sonntagen. Zeilen von Sonntagen, an denen nichts anliegt, in Excel löschen, speichern und mit
-  *⬆ Hochladen* wieder einspielen. Zusätzlich kann der Admin mit „+ Termin hinzufügen“ einzelne Tage anlegen (Sonntag oder z. B. Karfreitag)
-  und Termine in der App bearbeiten oder löschen.
-- *Aktuelle Tabelle* lädt die Excel-Datei so herunter, wie sie auf dem Server liegt. Das Hochladen ersetzt *alle* Termine
-  (der alte Stand bleibt als `termine.backup.xlsx` liegen).
+- Jede Person sagt mit ihrem Kürzel (oben eintragen, bleibt im Browser; Vorschläge aus der Legende der Tabelle) *Ja*, *Vielleicht* oder
+  *Nein*. Alle sehen, wer was geantwortet hat und wer noch offen ist; sagt der eingeteilte Mischer ab, wird das markiert.
+- **Admin:** ✎ neben dem Mischer trägt ihn in die Tabelle in OpenCloud ein (wie auf der Startseite); *✎ Bearbeiten* ergänzt Uhrzeit,
+  Anlass und Hinweise (nur in der App).
+- Die Antworten und Hinweise stehen in `data/termine.xlsx`, eine Zeile pro Datum, ab Spalte G eine Spalte pro Kürzel mit `Ja`,
+  `Vielleicht` oder `Nein`. Unter ⚙ Einstellungen lädt der Admin sie herunter oder ersetzt sie durch eine hochgeladene Fassung (der alte
+  Stand bleibt als `termine.backup.xlsx`). Zeilen zu Daten, die nicht (mehr) im Einsatzplan stehen, bleiben in der Datei, erscheinen
+  aber nicht. Die frühere Spalte „Eingeteilt“ wird nicht mehr angezeigt – es gilt der Mischer aus der Tabelle.
 - Die Datei darf auch direkt auf dem NAS bearbeitet werden; der Server liest sie bei jeder Anfrage neu. Verstanden werden
-  `j`/`n`/`?` als Antworten, Datumsfelder oder Text wie `25.10.2026` / `2026-10-25`, Uhrzeiten als Text oder Zeitfeld.
-  „Wochentag“ wird ignoriert; die Spalten A–F müssen an ihrer Stelle bleiben. Zeilen ohne gültiges Datum werden ignoriert
-  (der Admin sieht eine Warnung; beim nächsten Speichern gehen sie verloren).
-- Eine kaputte `termine.xlsx` wird nie überschrieben: Die App meldet dann einen Serverfehler, bis die Datei repariert
-  oder gelöscht ist.
+  `j`/`n`/`?` als Antworten, Datumsfelder oder Text wie `25.10.2026` / `2026-10-25`. Die Spalten A–F müssen an ihrer Stelle bleiben.
+- Eine kaputte `termine.xlsx` wird nie überschrieben: Die App meldet dann einen Serverfehler, bis die Datei repariert oder gelöscht ist.
 - Gleichzeitige Antworten gehen nicht verloren: Der Server führt Änderungen nacheinander aus und schreibt die Datei atomar.
-- Angezeigt werden alle kommenden Termine der Tabelle, vergangene per „Ältere anzeigen“. Die Liste aktualisiert sich jede Minute.
-- Wer antwortet, trägt oben sein Kürzel ein (bleibt im Browser). Wer mit welchem Kürzel antwortet, wird nicht geprüft –
-  gedacht für ein kleines, vertrautes Team.
+- Angezeigt werden alle kommenden Termine, vergangene per „Ältere anzeigen“. Die Liste aktualisiert sich jede Minute.
+- Wer mit welchem Kürzel antwortet, wird nicht geprüft – gedacht für ein kleines, vertrautes Team.
 
 ## Einsatzplan auf der Startseite
 
@@ -165,7 +158,8 @@ Fassung mit einem Hinweis. *↻ Aus OpenCloud aktualisieren* (Admin) liest sofor
 Gelesen wird nur das **erste Blatt**: Die Spalten werden an ihrer Überschrift erkannt (`Datum`, `Musikteam`, `Teamleitung`,
 `Mischer`, `Beamer`, optional `Besonderheiten` und `Bemerkungen`), ihre Reihenfolge und weitere Spalten sind egal.
 
-- **Mischer eintragen (Admin):** ✎ neben dem Mischer eines Termins, Kürzel eingeben (Vorschläge aus der Legende; leer = niemand).
+- **Mischer eintragen (Admin):** ✎ neben dem Mischer eines Termins (Startseite oder Termine), Kürzel eingeben (Vorschläge aus der
+  Legende; ein Kürzel, das nicht in der Legende steht, wird als möglicher Tippfehler angezeigt; leer = niemand).
   Der Server schreibt es in die Tabelle in OpenCloud – **nur diese eine Zelle**; Formatierung, andere Spalten und Blätter bleiben,
   wie sie sind. Hat jemand die Tabelle gerade gespeichert, trägt der Server es in dessen Fassung ein (nichts geht verloren); ist sie
   in OpenCloud gerade zum Bearbeiten geöffnet, meldet die App das. Zellen mit Formel werden nicht überschrieben. OpenCloud behält
@@ -177,9 +171,7 @@ Gelesen wird nur das **erste Blatt**: Die Spalten werden an ihrer Überschrift e
   **Angemeldet** stehen die nächsten zwei Termine groß oben, alle weiteren (auch vergangene) hinter *Alle Termine anzeigen*.
 - Ohne `cloud.plan` lädt der Admin die Tabelle mit *⬆ Plan importieren* hoch; ein neuer Import ersetzt den alten Plan (eine Datei ohne
   die Spalten „Datum“ und „Mischer“ wird abgelehnt), und der Mischer wird in `data/einsatzplan.xlsx` eingetragen.
-- In der App **Termine** steht bei einem Termin ohne eigenes „Eingeteilt“ der Mischer aus dem Einsatzplan (markiert mit
-  *laut Einsatzplan*; ★ und Absage-Warnung gelten dafür genauso). Er wird nicht in `termine.xlsx` gespeichert, folgt also dem
-  Plan. Ein eigener Eintrag unter *Bearbeiten* hat Vorrang; das Feld leeren schaltet zurück auf den Plan.
+- Die App **Termine** zeigt genau die Termine dieser Tabelle.
 
 ## eAg-Übersicht: Angaben für die MP3
 
@@ -240,11 +232,11 @@ cp config.example.json /tmp/mischer/config/config.json     # Passwörter eintrag
 docker run --rm -p 9120:8080 -v /tmp/mischer/config:/config:ro -v /tmp/mischer/data:/data mischer-app
 ```
 
-Die API (alle unter `/api`, Anmeldung per Cookie): `POST login` / `logout`, `GET me`, `GET`/`POST termine`,
+Die API (alle unter `/api`, Anmeldung per Cookie): `POST login` / `logout`, `GET me`, `GET`/`POST termine` (POST: `vote` für alle, `update` für den Admin; nur Daten aus dem Einsatzplan),
 `GET termine/export` und `POST termine/import` (Admin), `GET plan` (auch ohne Anmeldung, dann gekürzt; `source`: `OpenCloud`/`NAS`,
 `syncError`), `POST plan/import` (Admin, die xlsx als Body; `409`, wenn der Plan aus OpenCloud kommt), `POST plan/refresh` (Admin),
 `POST plan/mischer` (Admin, `{ "date": "2026-11-01", "mischer": "JD" }`; `404` Datum fehlt, `409` gleichzeitig geändert, `423` gesperrt),
-`GET overview?date=2026-11-01` (eAg-Übersicht: `series`, `index`, `preacher`), `GET`/`PUT settings/<app>` (PUT: Admin), `POST upload?name=<datei>.mp3` (veröffentlicht die MP3 aus dem Body, `Content-Type: audio/mpeg`),
+`GET overview?date=2026-11-01` (eAg-Übersicht: `series`, `index`, `preacher`), `GET`/`PUT settings/<app>` (PUT: Admin), `POST upload?name=<datei>.mp3` (veröffentlicht die MP3 aus dem Body, `Content-Type: audio/mpeg`), `GET published?name=<datei>.mp3` (`{ "exists": … }`, für alle Angemeldeten),
 `GET uploads` (Admin: die veröffentlichten Dateien; je Datei `original: true`, wenn sie schon ersetzt wurde), `GET uploads/<datei>.mp3` (Admin, mit `?original=1` die zuerst
 veröffentlichte Fassung), `PUT uploads/<datei>.mp3` (Admin: ersetzt eine veröffentlichte Datei, die MP3 als Body), `GET health`. `GET me` und `POST login`
 nennen in `target` das Ziel (`OpenCloud`, ohne Konfiguration `NAS`). Fehlercodes des Uploads: `401` nicht angemeldet, `400` ungültiger Name,
@@ -257,13 +249,16 @@ nennen in `target` das Ziel (`OpenCloud`, ohne Konfiguration `NAS`). Fehlercodes
    Wellenform-Peaks, Merkmale für die Erkennung und ein Frame-Index für exaktes Springen.
 2. **Schnitt** – Vorschlag für Start/Ende als orange Region; Übersicht mit Sprache/Musik/Stille,
    Alternativ-Vorschläge, Vorhören, Feinjustieren (Tastatur: Leertaste, S/E, ←/→, Umschalt, P).
-3. **Export** – Titel, Prediger, Datum, Bibelstelle und Dateiname eintragen (Schema `predigt-eag-{jjmmdd}`,
+3. **Veröffentlichen** – Titel, Prediger, Datum, Bibelstelle und Dateiname eintragen (Schema `predigt-eag-{jjmmdd}`,
    z. B. `predigt-eag-260712.mp3`); Titel, Album (Predigtreihe) und Prediger kommen vorausgefüllt aus der
    [eAg-Übersicht](#eag-übersicht-angaben-für-die-mp3), das Cover ist das eAg-Logo. Lautheit und Klang werden automatisch nach den Voreinstellungen des Admins
    angepasst (Standard: −19 LUFS, höchstens +55 dB Anhebung, Hochpass 80 Hz, sanfte Kompression 2:1, Hall &
    Rauschen reduzieren, „Sprache hoch“ = Mono 96 kbps, 0,5 s Ausblenden – die Predigt endet meist mit „Amen“);
-   Messung und MP3-Kodierung laufen schon im Hintergrund, während die Angaben ausgefüllt werden – „MP3 exportieren“
-   schreibt dann nur noch die Tags (Titel, Prediger …) hinein und ist sofort fertig. **⚙ Erweitert** zeigt
+   Messung und MP3-Kodierung laufen schon im Hintergrund, während die Angaben ausgefüllt werden. **⬆ Veröffentlichen**
+   schreibt dann die Angaben (Tags) hinein und lädt die Datei mit Fortschritt hoch – der Server legt sie im Ordner in OpenCloud ab;
+   *⬇ Nur herunterladen* speichert sie stattdessen auf dem Rechner. Ist der Dateiname schon vergeben, sagt die App das gleich beim
+   Ausfüllen (nicht erst nach der Arbeit): `mischer` kann dann nicht veröffentlichen (ist es dieselbe Predigt, ist nichts zu tun),
+   der Admin kann *⬆ Ersetzen*. Vorhandene Dateien werden sonst nie überschrieben. Fehlt der Prediger, wird das Feld markiert. **⚙ Erweitert** zeigt
    Messwerte und erlaubt, Zielwert, Format, Ein-/Ausblenden, Hochpass, Kompression und Hall-Reduzierung für diese eine Aufnahme
    zu ändern (die Voreinstellungen bleiben unverändert; Schließen stellt sie wieder her).
    Technik: Messung nach EBU R128 (BS.1770), Look-ahead-Limiter; ein einziger Dekodier-Durchlauf
@@ -281,8 +276,6 @@ nennen in `target` das Ziel (`OpenCloud`, ohne Konfiguration `NAS`). Fehlercodes
    Das Ergebnis wird für Messung und Kodierung wiederverwendet; ändern sich nur Lautheit oder Kompression, wird
    nicht neu gefiltert. Ist die Option an, startet der Filter schon im Schnitt-Schritt im Hintergrund (Vorschlag
    ± 30 s); Marker innerhalb dieses Bereichs zu verschieben braucht keinen neuen Durchgang.
-4. **Upload** – veröffentlicht die Datei: Der Server legt sie im Ordner in OpenCloud ab, mit Fortschritt; alternativ Herunterladen.
-   Vorhandene Dateien werden nie überschrieben.
 
 ## Predigt nachbearbeiten (nur Admin)
 

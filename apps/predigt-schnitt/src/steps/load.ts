@@ -28,7 +28,7 @@ export function createLoadStep(ctx: Ctx): Step {
       toast('Bitte eine MP3- oder WAV-Datei wählen.', 'error');
       return;
     }
-    if (ctx.state.rendered && !ctx.state.uploadedAs && !confirm('Der aktuelle Export wurde noch nicht hochgeladen. Trotzdem neue Datei laden?')) return;
+    if ((ctx.state.rendered || ctx.state.prepared) && !ctx.state.uploadedAs && !confirm('Die aktuelle Aufnahme wurde noch nicht veröffentlicht. Trotzdem eine neue Datei laden?')) return;
     busy = true;
     drop.classList.add('busy');
     ctx.resetForNewFile();
@@ -65,7 +65,7 @@ export function createLoadStep(ctx: Ctx): Step {
     h('div', { class: 'card-head' }, h('h2', null, '1 · Aufnahme laden')),
     drop, input, status,
     h('p', { class: 'muted small' },
-      'Die Datei wird nur in diesem Browser verarbeitet. Erst beim Upload (Schritt 4) verlässt das fertige MP3 den Rechner.'),
+      'Die Datei wird nur in diesem Browser verarbeitet. Erst beim Veröffentlichen (Schritt 3) verlässt das fertige MP3 den Rechner.'),
   );
   return { el };
 }

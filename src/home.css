@@ -52,8 +52,3 @@ body:not([data-role]) #logout { display: none; }
   .plan-row-rest { grid-column: 2; }
   .plan-list-head span:last-child { display: none; }
 }
-
-/* admin: assign the Mischer */
-.edit-mischer { padding: 0 .35rem; margin-left: .35rem; font-size: .85rem; line-height: 1.4; vertical-align: baseline; }
-dialog.assign { width: min(420px, calc(100vw - 2rem)); }
-dialog.assign label { display: flex; flex-direction: column; gap: .3rem; }

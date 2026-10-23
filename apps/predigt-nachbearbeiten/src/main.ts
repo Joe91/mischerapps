@@ -309,13 +309,13 @@ if (!isAdmin()) {
   const advanced = createAdvancedPanel(ctx, null, () => { resultStale(); if (loaded) prepare.start(); },
     'Gilt für alle Dateien auf dieser Seite. Die Standardwerte von Predigt-Schnitt bleiben unverändert.');
   const tagModeSelect = h('select', null,
-    h('option', { value: 'auto' }, 'automatisch – wie beim Export (eAg-Übersicht, Album-Interpret, Genre)'),
-    h('option', { value: 'keep' }, 'aus der Datei übernehmen, nur Fehlendes ergänzen'));
+    h('option', { value: 'auto' }, 'automatisch, wie beim Export'),
+    h('option', { value: 'keep' }, 'aus der Datei, nur Fehlendes ergänzen'));
   tagModeSelect.addEventListener('change', () => {
     tagMode = tagModeSelect.value as TagMode;
     if (loaded) { loaded.tags = tagsFor(loaded.fileTags, loaded.day, loaded.overview); showTags(); resultStale(); }
   });
-  const optionsSet = h('fieldset', { class: 'plain' }, advanced.el,
+  const optionsSet = h('fieldset', { class: 'plain options-set' }, advanced.el,
     h('label', { class: 'tag-mode' }, 'Angaben der MP3 (Titel, Prediger/in, Album …)', tagModeSelect));
 
   // ---- 3 · the loaded file ----

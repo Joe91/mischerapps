@@ -15,7 +15,8 @@ export function describeUploadError(status: number, body: string): string {
     case 401: return 'Die Anmeldung ist abgelaufen. Bitte die Seite neu laden und anmelden (die bearbeitete Datei geht dabei verloren – vorher herunterladen).';
     case 403: return 'Das darf nur der Admin.';
     case 404: return 'Die Datei gibt es auf dem Server nicht (mehr).';
-    case 409: return 'Der Server hat die Datei abgelehnt: Datei existiert bereits. Bitte Dateinamen ändern.';
+    case 409: return 'Unter diesem Namen ist schon eine Predigt veröffentlicht. Ist es dieselbe, ist nichts mehr zu tun; ' +
+      'sonst kann der Admin sie in „Predigt nachbearbeiten“ ersetzen.';
     case 413: return 'Der Server hat die Datei abgelehnt: Datei zu groß.';
     case 415: return 'Der Server hat die Datei abgelehnt: keine gültige MP3-Datei.';
     case 500: return `Fehler auf dem Server beim Speichern${b ? ` (${b})` : ''}.`;
@@ -41,6 +42,16 @@ function describeCloudError(b: string): string {
  * (the answer comes when it is stored there).
  */
 export type UploadProgress = (p: number, stored?: boolean) => void;
+
+/** Whether a sermon of this name is published already (null if the server cannot tell just now). */
+export async function isPublished(name: string): Promise<boolean | null> {
+  try {
+    const res = await fetch(`/api/published?name=${encodeURIComponent(name)}`, { cache: 'no-store' });
+    return res.ok ? (await res.json()).exists : null;
+  } catch {
+    return null;
+  }
+}
 
 /** Publishes the file under `name` via the server; the login cookie is sent automatically. */
 export const uploadFile = (file: Blob, name: string, onProgress: UploadProgress) =>

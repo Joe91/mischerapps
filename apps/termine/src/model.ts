@@ -1,4 +1,5 @@
-// Data model of the Termine app, shared by the browser and the tests.
+// Data model of the Termine app, shared by the browser and the tests. The dates themselves come from the
+// Einsatzplan (OpenCloud, see packages/plan); this data holds the answers and the admin's notes per date.
 
 export type Answer = 'yes' | 'maybe' | 'no';
 export const ANSWERS: Answer[] = ['yes', 'maybe', 'no'];
@@ -6,7 +7,7 @@ export const ANSWERS: Answer[] = ['yes', 'maybe', 'no'];
 export interface DateEntry {
   title: string;
   time: string;
-  /** who is assigned (Kürzel or names, free text) */
+  /** who was assigned in earlier versions (now the Mischer comes from the Einsatzplan); kept in the spreadsheet */
   assigned: string;
   note: string;
   /** Kürzel → answer */
@@ -26,12 +27,10 @@ export interface TermineData {
   };
 }
 
-/** The list of dates is chosen by the admin: a date exists once it has a row, even without any details or answers. */
+/** Changes to one date of the Einsatzplan (the server checks that the date is in it). */
 export type Op =
-  | { action: 'add'; date: string }
   | { action: 'vote'; date: string; sign: string; answer: Answer | null }
-  | { action: 'update'; date: string; title: string; time: string; assigned: string; note: string }
-  | { action: 'delete'; date: string };
+  | { action: 'update'; date: string; title: string; time: string; note: string };
 
 export const LIMITS = { title: 100, time: 20, assigned: 60, note: 1000 } as const;
 
@@ -55,39 +54,22 @@ export function normalizeSign(s: string): string {
   return /^[\p{L}\p{N}]{1,6}$/u.test(v) ? v : '';
 }
 
-/** `count` Sundays starting with the first Sunday on or after `from`. */
-export function sundays(from: Date, count: number): string[] {
-  const d = new Date(from.getFullYear(), from.getMonth(), from.getDate());
-  d.setDate(d.getDate() + ((7 - d.getDay()) % 7));
-  return Array.from({ length: count }, (_, i) => isoDate(new Date(d.getFullYear(), d.getMonth(), d.getDate() + i * 7)));
-}
-
 export class OpError extends Error {}
 
-/** Applies one change in place. Throws OpError for invalid input (→ HTTP 400). */
+/** Applies one change in place; the date gets its row with the first answer or note. Throws OpError for invalid input (→ HTTP 400). */
 export function applyOp(data: TermineData, op: Op): TermineData {
   if (!op || typeof op !== 'object' || !isValidDate(String(op.date))) throw new OpError('bad date');
-  if (op.action === 'delete') {
-    delete data.dates[op.date];
-    return data;
-  }
-  if (op.action === 'add') {
-    data.dates[op.date] ??= emptyEntry();
-    return data;
-  }
   if (op.action === 'vote') {
-    // only dates the admin has put on the list can be answered (a page that is out of date must not bring a deleted date back)
-    const entry = data.dates[op.date];
-    if (!entry) throw new OpError('unknown date');
     const sign = normalizeSign(String(op.sign ?? ''));
     if (!sign) throw new OpError('bad sign');
+    if (op.answer !== null && !ANSWERS.includes(op.answer)) throw new OpError('bad answer');
+    const entry = data.dates[op.date] ??= emptyEntry();
     if (entry.extra) delete entry.extra[sign]; // the answer replaces whatever was typed into the cell
     if (op.answer === null) delete entry.votes[sign];
-    else if (ANSWERS.includes(op.answer)) entry.votes[sign] = op.answer;
-    else throw new OpError('bad answer');
+    else entry.votes[sign] = op.answer;
   } else if (op.action === 'update') {
     const entry = data.dates[op.date] ??= emptyEntry();
-    for (const k of ['title', 'time', 'assigned', 'note'] as const) {
+    for (const k of ['title', 'time', 'note'] as const) {
       entry[k] = String(op[k] ?? '').trim().slice(0, LIMITS[k]);
     }
   } else {

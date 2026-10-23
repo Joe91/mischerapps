@@ -96,3 +96,5 @@
   .vote-line { grid-template-columns: 6rem 1fr; }
   .edit-btn { padding: .25rem .4rem; }
 }
+.plan-info { margin-top: .15rem; }
+.plan-note { margin-top: .5rem; }

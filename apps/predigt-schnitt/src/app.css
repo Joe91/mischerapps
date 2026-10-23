@@ -53,6 +53,7 @@
 /* ---- advanced options ---- */
 .file-name { margin-top: .8rem; max-width: 30rem; }
 .overview-hint { margin: .55rem 0 0; min-height: 1.2em; }
+label.missing input { border-color: var(--warn); box-shadow: 0 0 0 1px var(--warn); }
 .options { margin-top: .8rem; }
 .btn-ghost.active { background: var(--surface-2); }
 .ready { margin: .75rem 0 0; color: var(--ok); }

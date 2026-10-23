@@ -348,10 +348,13 @@ export function createCutStep(ctx: Ctx): Step {
     h('div', { class: 'markers' }, startRow.row, endRow.row),
     altsEl,
     h('p', { class: 'muted small keys' },
-      'Tastatur: Leertaste Abspielen/Pause · S / E setzt Start / Ende an die Abspielposition · ← → verschiebt den aktiven Marker um 0,1 s (mit Umschalt 1 s) · P hört den aktiven Marker vor. ',
-      'Start und Ende lassen sich im Wellenbild an den Rändern des orangen Bereichs ziehen; ist er ganz zu sehen, auch als Ganzes verschieben. Strg + Mausrad über dem Wellenbild zoomt.'),
+      h('span', { class: 'pointer-fine' },
+        'Tastatur: Leertaste Abspielen/Pause · S / E setzt Start / Ende an die Abspielposition · ← → verschiebt den aktiven Marker um 0,1 s (mit Umschalt 1 s) · P hört den aktiven Marker vor. '),
+      'Start und Ende lassen sich im Wellenbild an den Rändern des orangen Bereichs ziehen; ist er ganz zu sehen, auch als Ganzes verschieben. ',
+      h('span', { class: 'pointer-fine' }, 'Strg + Mausrad über dem Wellenbild zoomt.'),
+      h('span', { class: 'pointer-coarse' }, 'Zum Vergrößern den Regler „Zoom“ benutzen; die Knöpfe ±1 s / ±0,1 verschieben den Marker genau.')),
     h('div', { class: 'actions' },
-      h('button', { class: 'btn btn-primary', type: 'button', onclick: () => ctx.goto(STEP.export) }, 'Weiter zum Export →')),
+      h('button', { class: 'btn btn-primary', type: 'button', onclick: () => ctx.goto(STEP.export) }, 'Weiter →')),
   );
 
   return {

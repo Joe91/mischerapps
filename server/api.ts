@@ -262,7 +262,10 @@ export function createApi(cfg: ServerConfig, store: SermonStore = createStore(cf
     }
     if (path === '/api/termine' && post) {
       const op = await readJson(req) as Op;
-      if (op?.action !== 'vote') admin(); // everybody answers, only the admin edits dates
+      if (op?.action !== 'vote') admin(); // everybody answers, only the admin adds notes
+      // the dates are those of the Einsatzplan (OpenCloud): no others can be answered
+      const stored = await plan.read();
+      if (!stored?.plan.entries.some(e => e.date === op?.date)) throw new OpError('unknown date');
       const { data, skipped } = await termine.apply(op);
       return sendJson(res, 200, { dates: data.dates, skipped });
     }
@@ -270,12 +273,6 @@ export function createApi(cfg: ServerConfig, store: SermonStore = createStore(cf
       admin();
       return send(res, 200, await termine.exportXlsx(), {
         'Content-Type': XLSX_MIME, 'Content-Disposition': 'attachment; filename="termine.xlsx"',
-      });
-    }
-    if (path === '/api/termine/template' && method === 'GET') {
-      admin();
-      return send(res, 200, await termine.templateXlsx(), {
-        'Content-Type': XLSX_MIME, 'Content-Disposition': 'attachment; filename="termine-vorlage.xlsx"',
       });
     }
     if (path === '/api/termine/import' && post) {
@@ -343,6 +340,12 @@ export function createApi(cfg: ServerConfig, store: SermonStore = createStore(cf
     }
 
     if (path === '/api/upload' && post) return upload(req, res);
+    // is a sermon of this name published already? (for everybody: the export warns before the work is done)
+    if (path === '/api/published' && method === 'GET') {
+      const name = new URL(req.url ?? '', 'http://x').searchParams.get('name') ?? '';
+      if (!FILE_NAME.test(name)) throw new HttpError(400, 'bad name');
+      return sendJson(res, 200, { exists: await store.exists(name) });
+    }
     if (path === '/api/uploads' && method === 'GET') {
       admin();
       const files = (await store.list()).filter(f => FILE_NAME.test(f.name)).sort((a, b) => b.name.localeCompare(a.name));

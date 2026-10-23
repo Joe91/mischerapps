@@ -1,9 +1,10 @@
-// The Termine live in one human-readable spreadsheet (dataDir/termine.xlsx, see apps/termine/src/xlsx.ts).
+// The answers and notes of the Termine live in one human-readable spreadsheet (dataDir/termine.xlsx, see
+// apps/termine/src/xlsx.ts); the dates themselves come from the Einsatzplan.
 // It is read on every request, so edits made by hand on the NAS show up immediately. Changes are applied
 // one at a time and written atomically, so simultaneous answers cannot overwrite each other.
 import { readFile, copyFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { applyOp, emptyEntry, sundays, type Op, type TermineData } from '../apps/termine/src/model';
+import { applyOp, type Op, type TermineData } from '../apps/termine/src/model';
 import { readTermineXlsx, writeTermineXlsx } from '../apps/termine/src/xlsx';
 import { serialQueue, writeAtomic } from './files';
 
@@ -48,14 +49,7 @@ export class TermineStore {
     return toBuffer(await writeTermineXlsx(data));
   }
 
-  /** The current dates plus the next `weeks` Sundays that are not listed yet: delete the rows that are not needed, upload again. */
-  async templateXlsx(weeks = 52, from = new Date()): Promise<Buffer> {
-    const { data } = await this.read();
-    for (const date of sundays(from, weeks)) data.dates[date] ??= emptyEntry();
-    return toBuffer(await writeTermineXlsx(data));
-  }
-
-  /** Replaces all dates with the content of an uploaded spreadsheet; the previous file is kept as termine.backup.xlsx. */
+  /** Replaces all answers and notes with the content of an uploaded spreadsheet; the previous file is kept as termine.backup.xlsx. */
   importXlsx(buf: Buffer): Promise<{ dates: number; skipped: number }> {
     return this.serialize(async () => {
       let parsed: Loaded;

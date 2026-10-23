@@ -11,9 +11,8 @@ import { openSettings } from './settings-dialog';
 import { createLoadStep } from './steps/load';
 import { createCutStep } from './steps/cut';
 import { createExportStep } from './steps/export';
-import { createUploadStep } from './steps/upload';
 
-const STEP_LABELS = ['Laden', 'Schnitt', 'Export', 'Upload'];
+const STEP_LABELS = ['Laden', 'Schnitt', 'Veröffentlichen'];
 
 function initialState(settings: Settings): AppState {
   return {
@@ -75,21 +74,20 @@ const ctx: Ctx = {
 
 function available(i: number): boolean {
   if (i === STEP.load) return true;
-  if (!ctx.state.analysis) return false;
-  if (i === STEP.upload) return !!ctx.state.rendered;
-  return true;
+  return !!ctx.state.analysis;
 }
 
 nav.append(...STEP_LABELS.map((label, i) =>
   h('button', { type: 'button', onclick: () => ctx.goto(i) },
     h('span', { class: 'n' }, String(i + 1)), h('span', { class: 'label' }, label)),
 ));
-steps.push(createLoadStep(ctx), createCutStep(ctx), createExportStep(ctx), createUploadStep(ctx));
+steps.push(createLoadStep(ctx), createCutStep(ctx), createExportStep(ctx));
 
 $('#settings').addEventListener('click', () => openSettings(ctx, () => ctx.goto(current)));
 $('#logout').addEventListener('click', logout);
 window.addEventListener('beforeunload', e => {
-  if (ctx.state.rendered && !ctx.state.uploadedAs) e.preventDefault();
+  // the processed recording would be lost
+  if ((ctx.state.rendered || ctx.state.prepared) && !ctx.state.uploadedAs) e.preventDefault();
 });
 
 ctx.goto(STEP.load);

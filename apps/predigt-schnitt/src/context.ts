@@ -42,8 +42,8 @@ export interface AppState {
   uploadedAs: string | null;
 }
 
-/** Wizard steps in navigation order (the cut is followed directly by the export: loudness is applied automatically). */
-export const STEP = { load: 0, cut: 1, export: 2, upload: 3 } as const;
+/** Wizard steps in navigation order: the last one fills in the details and publishes (loudness is applied automatically). */
+export const STEP = { load: 0, cut: 1, export: 2 } as const;
 
 export interface Step {
   el: HTMLElement;

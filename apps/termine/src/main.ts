@@ -3,11 +3,10 @@ import './app.css';
 import { ensureLogin, isAdmin, logout } from '../../../packages/auth/auth';
 import { h, $, download, toast } from '../../../packages/ui-kit/dom';
 import { settingsStore, type Settings } from './settings';
-import { exportXlsx, fetchData, fetchPlanMischer, importXlsx, sendOp, templateXlsx, type Loaded } from './api';
-import {
-  ANSWERS, LIMITS, applyOp, emptyEntry, isValidDate, isoDate, normalizeSign,
-  type Answer, type DateEntry, type TermineData,
-} from './model';
+import { exportXlsx, fetchData, fetchPlan, importXlsx, sendOp, type Loaded } from './api';
+import { ANSWERS, LIMITS, applyOp, emptyEntry, isoDate, normalizeSign, type Answer, type DateEntry, type TermineData } from './model';
+import type { PlanEntry, PlanResponse } from '../../../packages/plan/plan';
+import { assignButton, fullNames, knownMischer } from '../../../packages/plan/assign';
 
 const ANSWER_LABEL: Record<Answer, string> = { yes: 'Ja', maybe: 'Vielleicht', no: 'Nein' };
 const ANSWER_ICON: Record<Answer, string> = { yes: '✓', maybe: '?', no: '✗' };
@@ -20,8 +19,9 @@ const main = $('#main');
 const stand = $('#stand');
 const settings: Settings = settingsStore.load();
 let data: TermineData = { dates: {} };
-/** date → Mischer from the Einsatzplan: stands in for an empty "Eingeteilt" */
-let planMischer: Record<string, string> = {};
+/** the dates: the Einsatzplan from OpenCloud (team, Mischer, Beamer, remarks); `data` adds answers and notes */
+let plan: PlanResponse | null = null;
+const planEntry = (date: string) => plan?.entries.find(e => e.date === date);
 let loaded = false;
 let loadError = '';
 /** how many past dates are listed (newest first), raised by "Ältere anzeigen" */
@@ -45,9 +45,9 @@ function take(res: Loaded) {
   warnedSkipped = res.skipped;
 }
 
-/** "Eingeteilt" as entered, otherwise the Mischer from the Einsatzplan (so a new plan shows up without editing every date). */
-const assignedText = (date: string, e: DateEntry) => e.assigned || planMischer[date] || '';
-/** Kürzel mentioned in the free-text "assigned" field ("JD, MK" / "JD + Gast"). */
+/** Who mixes: the Einsatzplan's Mischer ("??" = nobody yet). */
+const assignedText = (date: string) => { const m = planEntry(date)?.mischer.trim() ?? ''; return /^\?*$/.test(m) ? '' : m; };
+/** Kürzel in the Mischer cell ("JD, MK" / "JD + Gast"). */
 const assignedSigns = (text: string) => text.split(/[\s,;/+&]+/).map(normalizeSign).filter(Boolean);
 
 /** Everyone who ever answered – used to show who has not answered yet. */
@@ -58,9 +58,9 @@ function knownSigns(): string[] {
   return [...all].sort();
 }
 
-/** Only the dates on the list (= rows of the spreadsheet): all upcoming ones and the newest `pastShown` past ones. */
+/** The dates of the Einsatzplan: all upcoming ones and the newest `pastShown` past ones. */
 function visibleDates(): string[] {
-  const all = Object.keys(data.dates).sort();
+  const all = (plan?.entries ?? []).map(e => e.date).sort();
   const t = today();
   const past = all.filter(d => d < t);
   const list = new Set([...(pastShown ? past.slice(-pastShown) : []), ...all.filter(d => d >= t)]);
@@ -68,16 +68,15 @@ function visibleDates(): string[] {
   return [...list].sort();
 }
 
-const pastCount = () => Object.keys(data.dates).filter(d => d < today()).length;
+const pastCount = () => (plan?.entries ?? []).filter(e => e.date < today()).length;
 
 // ---- server ----
 
 async function load(quiet = false) {
   try {
-    // the plan is extra information: if it fails, keep the last one
-    const [res, plan] = await Promise.all([fetchData(), fetchPlanMischer().catch(() => planMischer)]);
+    const [res, p] = await Promise.all([fetchData(), fetchPlan()]);
     take(res);
-    planMischer = plan;
+    plan = p;
     loaded = true;
     loadError = '';
     stand.textContent = new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
@@ -103,7 +102,7 @@ async function vote(date: string, answer: Answer | null) {
   render();
 }
 
-async function saveEntry(date: string, fields: Pick<DateEntry, 'title' | 'time' | 'assigned' | 'note'>) {
+async function saveEntry(date: string, fields: Pick<DateEntry, 'title' | 'time' | 'note'>) {
   try {
     take(await sendOp({ action: 'update', date, ...fields }));
     toast('Gespeichert.', 'ok', 2000);
@@ -113,26 +112,13 @@ async function saveEntry(date: string, fields: Pick<DateEntry, 'title' | 'time' 
   }
 }
 
-/** Admin: puts a date on the list (any day, e.g. a holiday) and opens it for details. */
-async function addDate(date: string) {
-  if (!data.dates[date]) {
-    try {
-      take(await sendOp({ action: 'add', date }));
-    } catch (e) {
-      toast((e as Error).message, 'error');
-      return;
-    }
-    if (date < today()) pastShown = Math.max(pastShown, Object.keys(data.dates).filter(d => d >= date && d < today()).length);
-  }
-  startEdit(date);
-  document.getElementById(`d-${date}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-}
-
 // ---- rendering ----
 
 function signBar() {
+  // suggestions: the Kürzel of the Einsatzplan's key, with the names
+  const codes = h('datalist', { id: 'sign-codes' }, plan ? knownMischer(plan).map(c => h('option', { value: c }, plan!.names[c] ?? '')) : []);
   const input = h('input', {
-    id: 'sign', value: settings.sign, maxlength: 6, placeholder: 'z. B. JD', autocomplete: 'off',
+    id: 'sign', value: settings.sign, maxlength: 6, placeholder: 'z. B. JD', autocomplete: 'off', list: 'sign-codes',
     autocapitalize: 'characters', spellcheck: 'false', class: 'sign-input',
   });
   const apply = () => {
@@ -146,18 +132,10 @@ function signBar() {
   input.addEventListener('change', apply);
   input.addEventListener('keydown', e => { if (e.key === 'Enter') input.blur(); });
 
-  const extra = h('input', { type: 'date', class: 'hidden' });
-  extra.addEventListener('change', () => { if (isValidDate(extra.value)) void addDate(extra.value); });
-
   return h('div', { class: 'toolbar' },
-    h('label', { class: 'sign-label' }, 'Mein Kürzel', input),
+    h('label', { class: 'sign-label' }, 'Mein Kürzel', input), codes,
     h('span', { class: 'spacer' }),
     pastCount() > pastShown ? h('button', { class: 'btn btn-sm', type: 'button', onclick: () => { pastShown += PAST_STEP; render(); } }, '↑ Ältere anzeigen') : '',
-    isAdmin() ? h('button', {
-      class: 'btn btn-sm', type: 'button', title: 'Einen Tag (Sonntag oder z. B. Feiertag) zur Liste hinzufügen',
-      onclick: () => { extra.classList.remove('hidden'); extra.showPicker?.(); extra.focus(); },
-    }, '+ Termin hinzufügen') : '',
-    isAdmin() ? extra : '',
   );
 }
 
@@ -192,34 +170,35 @@ function voteSummary(e: DateEntry, assigned: string[]) {
   );
 }
 
-function assignedInfo(date: string, e: DateEntry, assigned: string[]) {
-  const text = assignedText(date, e);
-  if (!text) return h('div', { class: 'assigned none' }, 'Noch niemand eingeteilt');
+/** The Mischer from the Einsatzplan, with a warning if an assigned person said no; the admin changes it with ✎. */
+function assignedInfo(entry: PlanEntry, e: DateEntry, assigned: string[]) {
+  const text = assignedText(entry.date);
+  const edit = isAdmin() ? assignButton(entry, () => plan, () => void load()) : '';
+  if (!text) return h('div', { class: 'assigned none' }, 'Mischer: noch niemand eingeteilt', edit);
   const warnings = assigned.filter(s => e.votes[s] === 'no' || e.votes[s] === 'maybe')
     .map(s => h('span', { class: `warn-tag ans-${e.votes[s]}` }, `${s} hat ${e.votes[s] === 'no' ? 'abgesagt' : '„vielleicht“ gesagt'}`));
+  const names = fullNames(plan?.names ?? {}, text);
   return h('div', { class: 'assigned' },
-    h('span', { class: 'muted' }, 'Eingeteilt: '), h('strong', null, text),
-    e.assigned ? '' : h('span', {
-      class: 'plan-tag', title: 'Mischer aus dem Einsatzplan (Startseite). Ein eigener Eintrag unter „Bearbeiten“ hat Vorrang.',
-    }, 'laut Einsatzplan'),
+    h('span', { class: 'muted' }, 'Mischer: '), h('strong', null, names), names !== text ? h('span', { class: 'muted' }, ` (${text})`) : '',
+    edit,
     settings.sign && assigned.includes(settings.sign) ? h('span', { class: 'you-tag' }, 'Du') : '',
     ...warnings,
   );
 }
 
-async function deleteEntry(date: string) {
-  if (!confirm(`Den Termin am ${fmtLong(date)} mit allen Antworten löschen?`)) return;
-  try {
-    take(await sendOp({ action: 'delete', date }));
-    toast('Termin gelöscht.', 'ok', 2000);
-    startEdit(null);
-  } catch (e) {
-    toast((e as Error).message, 'error');
-  }
+/** What else the Einsatzplan says about the date. */
+function planInfo(entry: PlanEntry) {
+  const names = plan?.names ?? {};
+  const parts = [
+    entry.beamer && `Beamer: ${fullNames(names, entry.beamer)}`,
+    (entry.team || entry.lead) && `Musik: ${[entry.team, entry.lead].filter(Boolean).join(' · ')}`,
+  ].filter(Boolean);
+  return parts.length ? h('div', { class: 'plan-info muted small' }, parts.join(' · ')) : '';
 }
 
+/** Admin: time, occasion and notes for a date (the date itself and the Mischer come from the Einsatzplan). */
 function editForm(date: string, e: DateEntry) {
-  const field = (label: string, key: 'title' | 'time' | 'assigned', placeholder: string) =>
+  const field = (label: string, key: 'title' | 'time', placeholder: string) =>
     h('label', null, label, h('input', { name: key, value: e[key], maxlength: LIMITS[key], placeholder }));
   const note = h('textarea', { name: 'note', rows: 3, maxlength: LIMITS.note, placeholder: 'z. B. Band spielt, Beamer wird gebraucht, Taufe …' });
   note.value = e.note;
@@ -229,19 +208,15 @@ function editForm(date: string, e: DateEntry) {
       ev.preventDefault();
       const f = new FormData(form);
       const get = (k: string) => String(f.get(k) ?? '');
-      void saveEntry(date, { title: get('title'), time: get('time'), assigned: get('assigned'), note: get('note') });
+      void saveEntry(date, { title: get('title'), time: get('time'), note: get('note') });
     },
   },
     h('div', { class: 'grid' },
-      field('Anlass / Titel', 'title', 'z. B. Gottesdienst mit Abendmahl'),
+      field('Anlass / Titel', 'title', planEntry(date)?.special ? `leer = laut Einsatzplan: ${planEntry(date)!.special}` : 'z. B. Gottesdienst mit Abendmahl'),
       field('Uhrzeit', 'time', 'z. B. 10:00'),
-      // the plan's Mischer only as placeholder: saved, it would no longer follow a newly imported plan
-      field('Eingeteilt', 'assigned', planMischer[date] ? `leer = laut Einsatzplan: ${planMischer[date]}` : 'Kürzel, z. B. JD, MK'),
     ),
     h('label', null, 'Hinweise', note),
     h('div', { class: 'actions' },
-      data.dates[date] ? h('button', { class: 'btn btn-danger', type: 'button', onclick: () => deleteEntry(date) }, 'Termin löschen') : '',
-      h('span', { class: 'spacer' }),
       h('button', { class: 'btn', type: 'button', onclick: () => startEdit(null) }, 'Abbrechen'),
       h('button', { class: 'btn btn-primary', type: 'submit' }, 'Speichern'),
     ),
@@ -250,10 +225,12 @@ function editForm(date: string, e: DateEntry) {
 }
 
 function dateCard(date: string, isNext: boolean) {
+  const entry = planEntry(date)!;
   const e = data.dates[date] ?? emptyEntry();
   const d = parseIso(date);
   const past = date < today();
-  const assigned = assignedSigns(assignedText(date, e));
+  const assigned = assignedSigns(assignedText(date));
+  const title = e.title || entry.special;
   const mine = settings.sign ? e.votes[settings.sign] : undefined;
   const isEditing = editing === date;
 
@@ -267,15 +244,17 @@ function dateCard(date: string, isNext: boolean) {
       h('div', { class: 'date-info' },
         h('h2', null, fmtLong(date), e.time ? h('span', { class: 'muted' }, ` · ${e.time}`) : '',
           isNext ? h('span', { class: 'next-tag' }, 'Nächster Termin') : ''),
-        e.title ? h('div', { class: 'date-title' }, e.title) : '',
-        assignedInfo(date, e, assigned),
+        title ? h('div', { class: 'date-title' }, title) : '',
+        assignedInfo(entry, e, assigned),
+        planInfo(entry),
       ),
       isEditing || !isAdmin() ? '' : h('button', {
-        class: 'btn btn-ghost btn-sm edit-btn', type: 'button', title: 'Anlass, Uhrzeit, Einteilung und Hinweise bearbeiten',
+        class: 'btn btn-ghost btn-sm edit-btn', type: 'button', title: 'Anlass, Uhrzeit und Hinweise bearbeiten',
         onclick: () => startEdit(date),
       }, '✎ Bearbeiten'),
     ),
     isEditing ? (openForm ??= editForm(date, e)) : e.note ? h('p', { class: 'note' }, e.note) : '',
+    entry.note ? h('p', { class: 'note plan-note' }, entry.note) : '',
     h('div', { class: 'vote-row' },
       h('span', { class: 'vote-q' }, settings.sign ? `${settings.sign}, kannst du?` : 'Kannst du?'),
       voteButtons(date, mine),
@@ -299,13 +278,12 @@ function render() {
   const next = dates.find(d => d >= today());
   main.replaceChildren(head,
     loadError ? h('div', { class: 'notice error' }, `Aktualisieren fehlgeschlagen: ${loadError}`) : '',
-    next ? '' : h('p', { class: 'muted center' }, isAdmin()
-      ? 'Noch keine kommenden Termine. Mit „+ Termin hinzufügen“ oder über ⚙ Einstellungen → Tabelle (Vorlage mit allen Sonntagen) anlegen.'
-      : 'Noch keine kommenden Termine eingetragen.'),
+    plan?.syncError ? h('div', { class: 'notice warn' }, `Der Einsatzplan in OpenCloud kann gerade nicht gelesen werden (${plan.syncError}). Angezeigt wird der zuletzt gelesene Stand.`) : '',
+    next ? '' : h('p', { class: 'muted center' }, 'Im Einsatzplan stehen keine kommenden Termine.'),
     ...dates.map(date => dateCard(date, date === next)),
-    h('p', { class: 'muted small center' }, isAdmin()
-      ? 'Angezeigt werden nur die eingetragenen Termine – weitere über „+ Termin hinzufügen“ oder die Tabelle in den Einstellungen.'
-      : 'Angezeigt werden die Termine, die der Admin eingetragen hat.'),
+    h('p', { class: 'muted small center' }, plan?.source === 'OpenCloud'
+      ? 'Die Termine kommen aus dem Einsatzplan in OpenCloud (Musik_Mischer_Beamer.xlsx); ohne Gottesdienst („kein eAg“) erscheinen sie nicht.'
+      : 'Die Termine kommen aus dem Einsatzplan (Startseite).'),
   );
   if (signFocused) $<HTMLInputElement>('#sign').focus();
 }
@@ -323,10 +301,10 @@ function openSettings() {
     const f = importInput.files?.[0];
     importInput.value = '';
     if (!f) return;
-    if (!confirm(`Alle Termine durch den Inhalt von „${f.name}“ ersetzen? Die bisherige Tabelle wird als termine.backup.xlsx auf dem Server aufgehoben.`)) return;
+    if (!confirm(`Alle Antworten und Hinweise durch den Inhalt von „${f.name}“ ersetzen? Die bisherige Tabelle wird als termine.backup.xlsx auf dem Server aufgehoben.`)) return;
     try {
       const r = await importXlsx(f);
-      toast(`${r.dates} Termine übernommen${r.skipped ? `, ${r.skipped} Zeile(n) ohne gültiges Datum ignoriert` : ''}.`, r.skipped ? 'info' : 'ok', 7000);
+      toast(`${r.dates} Zeilen übernommen${r.skipped ? `, ${r.skipped} Zeile(n) ohne gültiges Datum ignoriert` : ''}.`, r.skipped ? 'info' : 'ok', 7000);
       dlg.close();
       void load();
     } catch (e) {
@@ -341,13 +319,9 @@ function openSettings() {
     h('div', { class: 'dlg-body' },
       h('fieldset', null, h('legend', null, 'Termine (Excel)'),
         h('p', { class: 'muted small' },
-          'Die App zeigt genau die Termine, die in der Excel-Datei auf dem Server (termine.xlsx) stehen: eine Zeile pro Termin, ' +
-          'eine Spalte pro Kürzel. Es gibt keine automatischen Sonntage.'),
-        h('p', { class: 'muted small' },
-          'Auswählen mit der Vorlage: Sie enthält die bisherigen Termine und dazu die nächsten 52 Sonntage. Zeilen, die ihr nicht braucht, ' +
-          'in Excel löschen, speichern und wieder hochladen – das Hochladen ersetzt alle Termine.'),
+          'Die Termine selbst kommen aus dem Einsatzplan in OpenCloud. In der Excel-Datei auf dem Server (termine.xlsx) stehen die ' +
+          'Antworten (eine Spalte pro Kürzel) und die Hinweise. Hochladen ersetzt sie alle; der alte Stand bleibt als termine.backup.xlsx.'),
         h('div', { class: 'row' },
-          h('button', { class: 'btn btn-sm', type: 'button', onclick: downloadSheet(templateXlsx, 'termine-vorlage.xlsx') }, '⬇ Vorlage mit allen Sonntagen'),
           h('button', { class: 'btn btn-sm', type: 'button', onclick: downloadSheet(exportXlsx, 'termine.xlsx') }, '⬇ Aktuelle Tabelle'),
           h('button', { class: 'btn btn-sm', type: 'button', onclick: () => importInput.click() }, '⬆ Hochladen …'),
           importInput,

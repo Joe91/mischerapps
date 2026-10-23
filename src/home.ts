@@ -5,6 +5,7 @@ import { ensureLogin, isAdmin, logout } from '../packages/auth/auth';
 import { h, $, toast } from '../packages/ui-kit/dom';
 import { isoDate } from '../apps/termine/src/model';
 import type { PlanEntry, PlanResponse } from '../packages/plan/plan';
+import { assignButton } from '../packages/plan/assign';
 
 interface AppEntry { id: string; title: string; description: string; path: string; icon: string; adminOnly?: boolean; }
 
@@ -55,78 +56,8 @@ function person(label: string, value: string, main = false, edit?: HTMLElement) 
   );
 }
 
-// ---- admin: who mixes on a date (written into the Einsatzplan, in OpenCloud only that cell) ----
-
-const ASSIGN_ERRORS: Record<number, string> = {
-  404: 'Dieses Datum steht nicht (mehr) in der Tabelle.',
-  409: 'Die Tabelle wurde gerade von jemand anderem geändert. Bitte noch einmal versuchen.',
-  423: 'Die Tabelle ist gerade in OpenCloud zum Bearbeiten geöffnet. Bitte später noch einmal versuchen.',
-  500: 'Die Tabelle kann nicht gelesen werden (beschädigt, oder die Zelle enthält eine Formel).',
-  502: 'OpenCloud ist gerade nicht erreichbar, oder das App-Token ist abgelaufen.',
-};
-
-const editButton = (e: PlanEntry) => isAdmin()
-  ? h('button', { class: 'btn btn-ghost btn-sm edit-mischer', type: 'button', title: 'Mischer eintragen', 'aria-label': `Mischer am ${e.date} eintragen`, onclick: () => assignMischer(e) }, '✎')
-  : undefined;
-
-/** Kürzel known from the key below the plan and from earlier assignments, for the suggestions. */
-function knownMischer(): string[] {
-  const codes = new Set(Object.keys(plan?.names ?? {}));
-  for (const e of plan?.entries ?? []) for (const c of e.mischer.split(/[,/ ]+/)) if (/^[A-ZÄÖÜ]{1,6}$/.test(c)) codes.add(c);
-  return [...codes].sort();
-}
-
-function assignMischer(e: PlanEntry) {
-  const list = h('datalist', { id: 'mischer-codes' }, knownMischer().map(c => h('option', { value: c }, plan?.names[c] ?? '')));
-  const input = h('input', { value: isOpen(e.mischer) ? '' : e.mischer, list: 'mischer-codes', maxlength: 60, autocomplete: 'off', placeholder: 'Kürzel, z. B. JD' });
-  const hint = h('p', { class: 'muted small' });
-  const status = h('p', { class: 'login-error', role: 'alert' });
-  const showHint = () => { hint.textContent = input.value.trim() ? fullNames(input.value.trim()) : 'Leer lassen = niemand eingeteilt'; };
-  input.addEventListener('input', showHint);
-  showHint();
-  const save = h('button', { class: 'btn btn-primary', type: 'submit' }, 'Speichern');
-  const dlg = h('dialog', { class: 'assign' },
-    h('form', {
-      onsubmit: async (ev: Event) => {
-        ev.preventDefault();
-        save.disabled = true;
-        status.textContent = '';
-        try {
-          let res: Response;
-          try {
-            res = await fetch('/api/plan/mischer', {
-              method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date: e.date, mischer: input.value.trim() }),
-            });
-          } catch { throw new Error('Server nicht erreichbar.'); }
-          if (!res.ok) throw new Error(ASSIGN_ERRORS[res.status] ?? `Speichern fehlgeschlagen (${res.status}).`);
-          dlg.close();
-          toast(plan?.source === 'OpenCloud' ? 'In der Tabelle in OpenCloud eingetragen.' : 'Eingetragen.', 'ok');
-          await loadPlan();
-        } catch (err) {
-          status.textContent = (err as Error).message;
-        } finally {
-          save.disabled = false;
-        }
-      },
-    },
-      h('div', { class: 'dlg-head' }, h('h2', null, 'Mischer eintragen')),
-      h('div', { class: 'dlg-body' },
-        h('p', null, parseIso(e.date).toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
-          e.team ? h('span', { class: 'muted' }, ` · ${team(e)}`) : ''),
-        h('label', null, 'Mischer', input), list, hint, status,
-        h('p', { class: 'muted small' }, plan?.source === 'OpenCloud'
-          ? 'Wird in die Tabelle Musik_Mischer_Beamer.xlsx in OpenCloud geschrieben – nur diese eine Zelle.'
-          : 'Wird in die Tabelle auf dem NAS geschrieben.'),
-        h('div', { class: 'actions' },
-          h('button', { class: 'btn', type: 'button', onclick: () => dlg.close() }, 'Abbrechen'), save),
-      ),
-    ),
-  );
-  dlg.addEventListener('close', () => dlg.remove());
-  document.body.append(dlg);
-  dlg.showModal();
-  input.focus();
-}
+// admin: who mixes on a date (written into the Einsatzplan, in OpenCloud only that cell)
+const editButton = (e: PlanEntry) => isAdmin() ? assignButton(e, () => plan, () => void loadPlan()) : undefined;
 
 function nextCard(e: PlanEntry, first: boolean) {
   const rel = relativeDay(e.date);

@@ -24,3 +24,5 @@ fieldset.plain { border: 0; padding: 0; margin: 0; min-width: 0; }
 .tag-grid { margin-top: 1rem; }
 .cover-row { margin-top: .8rem; }
 .tag-mode { margin-top: 1rem; max-width: 34rem; }
+/* the card is titled "Bearbeitung" already; the panel's note stays */
+.options-set .advanced-head h3 { display: none; }

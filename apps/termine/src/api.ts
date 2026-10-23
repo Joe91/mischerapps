@@ -17,7 +17,7 @@ export function describeApiError(status: number, body: string): string {
     case 0: return 'Server nicht erreichbar. Bitte die Internetverbindung prüfen.';
     case 400:
       if (b === 'bad sign') return 'Ungültiges Kürzel (1–6 Buchstaben oder Ziffern).';
-      if (b === 'unknown date') return 'Diesen Termin gibt es nicht mehr. Die Liste wird neu geladen.';
+      if (b === 'unknown date') return 'Diesen Termin gibt es im Einsatzplan nicht (mehr). Die Liste wird neu geladen.';
       return `Der Server hat die Änderung abgelehnt (${b || 400}).`;
     case 401: return 'Die Anmeldung ist abgelaufen. Bitte die Seite neu laden und anmelden.';
     case 403: return 'Das darf nur der Admin.';
@@ -51,9 +51,6 @@ export const sendOp = async (op: Op): Promise<Loaded> =>
 /** Admin: the current spreadsheet. */
 export const exportXlsx = async (): Promise<Blob> => (await request('/api/termine/export')).blob();
 
-/** Admin: the current spreadsheet plus the coming Sundays, to delete the rows that are not needed. */
-export const templateXlsx = async (): Promise<Blob> => (await request('/api/termine/template')).blob();
-
 /** Admin: replaces all dates with the content of a spreadsheet. */
 export async function importXlsx(file: Blob): Promise<{ dates: number; skipped: number }> {
   try {
@@ -64,11 +61,5 @@ export async function importXlsx(file: Blob): Promise<{ dates: number; skipped: 
   }
 }
 
-/**
- * Date → Mischer from the Einsatzplan the admin imported on the home page (see packages/plan/plan.ts).
- * Dates without a Mischer ("", "??") are left out.
- */
-export async function fetchPlanMischer(): Promise<Record<string, string>> {
-  const { entries } = await (await request('/api/plan')).json() as PlanResponse;
-  return Object.fromEntries(entries.filter(e => !/^\?*$/.test(e.mischer.trim())).map(e => [e.date, e.mischer]));
-}
+/** The Einsatzplan (OpenCloud): the dates of the Termine with team, Mischer, Beamer and remarks. */
+export const fetchPlan = async (): Promise<PlanResponse> => (await request('/api/plan')).json();
