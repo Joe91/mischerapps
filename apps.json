@@ -12,5 +12,13 @@
     "description": "Wer kann an welchem Sonntag? Zu- und Absagen, Einteilung und Hinweise für alle sichtbar",
     "path": "apps/termine/",
     "icon": "📅"
+  },
+  {
+    "id": "predigt-nachbearbeiten",
+    "title": "Predigt nachbearbeiten",
+    "description": "Veröffentlichte Predigten neu bearbeiten (z. B. Hall & Rauschen reduzieren) und ersetzen – vom NAS oder vom Rechner, auch mehrere",
+    "path": "apps/predigt-nachbearbeiten/",
+    "icon": "🔁",
+    "adminOnly": true
   }
 ]

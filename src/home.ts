@@ -6,7 +6,7 @@ import { h, $, toast } from '../packages/ui-kit/dom';
 import { isoDate } from '../apps/termine/src/model';
 import type { PlanEntry, PlanResponse } from '../packages/plan/plan';
 
-interface AppEntry { id: string; title: string; description: string; path: string; icon: string; }
+interface AppEntry { id: string; title: string; description: string; path: string; icon: string; adminOnly?: boolean; }
 
 const XLSX_ACCEPT = '.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet';
 
@@ -155,7 +155,7 @@ await ensureLogin('Anmelden', $<HTMLElement>('#login'));
 // now all dates, and the import button for the admin (`plan` was set by loadPlan meanwhile)
 if ((plan as PlanResponse | null)?.public !== false) await loadPlan(); else renderPlan();
 
-$('#tiles').append(...(apps as AppEntry[]).map(a =>
+$('#tiles').append(...(apps as AppEntry[]).filter(a => !a.adminOnly || isAdmin()).map(a =>
   h('a', { class: 'tile', href: a.path },
     h('span', { class: 'tile-icon', 'aria-hidden': 'true' }, a.icon),
     h('span', { class: 'tile-title' }, a.title),

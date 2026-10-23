@@ -1,0 +1,25 @@
+/* ---- published files ---- */
+.list-tools input { flex: 1; max-width: 22rem; }
+.file-list {
+  list-style: none; margin: .6rem 0 0; padding: 0; max-height: 24rem; overflow-y: auto;
+  border: 1px solid var(--border); border-radius: 8px;
+}
+.file-row { display: flex; align-items: center; gap: .3rem .75rem; flex-wrap: wrap; padding: .45rem .7rem; border-bottom: 1px solid var(--border); }
+.file-row:last-child { border-bottom: 0; }
+.file-row.active { background: var(--accent-soft); }
+.file-row .file-cell { font-weight: 600; overflow-wrap: anywhere; }
+.file-row .row-buttons { margin-left: auto; display: flex; gap: .3rem; }
+.files-head { margin: 1.1rem 0 .4rem; font-size: 1rem; }
+.dropzone.compact { padding: 1.1rem 1rem; }
+.local-status.done { color: var(--ok); }
+.local-status.error { color: var(--danger); }
+.local-status.running { color: var(--accent); }
+.batch-status { margin-right: auto; align-self: center; }
+
+/* ---- editor ---- */
+fieldset.plain { border: 0; padding: 0; margin: 0; min-width: 0; }
+.source { display: flex; align-items: center; gap: .4rem .75rem; flex-wrap: wrap; margin: 0 0 .75rem; }
+.listen { display: flex; flex-direction: column; gap: .25rem; width: min(420px, 100%); }
+.listen audio { width: 100%; }
+.tag-grid { margin-top: 1rem; }
+.cover-row { margin-top: .8rem; }

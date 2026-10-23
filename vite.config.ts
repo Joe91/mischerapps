@@ -13,6 +13,7 @@ export default defineConfig({
         home: resolve(__dirname, 'index.html'),
         predigt: resolve(__dirname, 'apps/predigt-schnitt/index.html'),
         termine: resolve(__dirname, 'apps/termine/index.html'),
+        nachbearbeiten: resolve(__dirname, 'apps/predigt-nachbearbeiten/index.html'),
         // weitere Apps hier ergänzen
       },
     },

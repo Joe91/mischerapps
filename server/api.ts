@@ -2,8 +2,8 @@
 // Used by server/main.ts (production) and dev-server.ts (npm run dev / preview).
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
-import { mkdir, open, readdir, stat, unlink } from 'node:fs/promises';
+import { createReadStream, mkdirSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
+import { mkdir, open, readdir, rename, stat, unlink } from 'node:fs/promises';
 import { pipeline } from 'node:stream/promises';
 import { join } from 'node:path';
 import { OpError, isoDate, type Op } from '../apps/termine/src/model';
@@ -21,6 +21,8 @@ export class HttpError extends Error {
 
 const COOKIE = 'mischer_session';
 const FILE_NAME = /^[A-Za-z0-9._-]{1,120}\.mp3$/;
+/** subfolder of predigten/ with the files as first published, before an admin replaced them */
+const ORIGINALS = 'original';
 
 function secretFor(cfg: ServerConfig): string {
   if (cfg.sessionSecret) return cfg.sessionSecret;
@@ -113,24 +115,53 @@ export function createApi(cfg: ServerConfig) {
    * it arrives, so the server never holds the file in memory. Never overwrites an existing file.
    */
   async function upload(req: IncomingMessage, res: ServerResponse) {
-    // audio/mpeg is no "simple" type: a foreign page cannot send it without a CORS preflight (which is refused)
-    if (!String(req.headers['content-type'] ?? '').startsWith('audio/mpeg')) throw new HttpError(415, 'not mp3');
     const name = new URL(req.url ?? '', 'http://x').searchParams.get('name') ?? '';
     if (!FILE_NAME.test(name)) throw new HttpError(400, 'bad name');
-    if (Number(req.headers['content-length'] ?? 0) > maxUpload) throw new HttpError(413, 'too large');
+    const size = await receiveMp3(req, join(predigten, name));
+    log(`upload ${name} (${Math.round(size / 1024)} kB)`);
+    sendJson(res, 200, { ok: true, file: name });
+  }
 
+  /**
+   * PUT /api/uploads/<file>.mp3 (admin): replaces a published file with a reprocessed one. The first
+   * replacement keeps the file as published in predigten/original/, later ones overwrite only the current file.
+   */
+  async function replace(req: IncomingMessage, res: ServerResponse, name: string) {
+    const target = join(predigten, name);
+    if (!existsSync(target)) throw new HttpError(404, 'not found');
+    const tmp = join(predigten, `.${name}.${randomBytes(4).toString('hex')}.tmp`);
+    const size = await receiveMp3(req, tmp);
+    const original = join(predigten, ORIGINALS, name);
+    try {
+      if (!existsSync(original)) {
+        await mkdir(join(predigten, ORIGINALS), { recursive: true });
+        await rename(target, original);
+      }
+      await rename(tmp, target);
+    } catch (e) {
+      await unlink(tmp).catch(() => undefined);
+      throw e;
+    }
+    log(`replaced ${name} (${Math.round(size / 1024)} kB)`);
+    sendJson(res, 200, { ok: true, file: name });
+  }
+
+  /** Streams the request body to `target` (a new file); checks type and size first. */
+  async function receiveMp3(req: IncomingMessage, target: string): Promise<number> {
+    // audio/mpeg is no "simple" type: a foreign page cannot send it without a CORS preflight (which is refused)
+    if (!String(req.headers['content-type'] ?? '').startsWith('audio/mpeg')) throw new HttpError(415, 'not mp3');
+    if (Number(req.headers['content-length'] ?? 0) > maxUpload) throw new HttpError(413, 'too large');
     const body = req[Symbol.asyncIterator]() as AsyncIterator<Buffer>;
     try {
-      await receive(body, name);
+      return await receive(body, target);
     } catch (e) {
       // read the rest anyway, otherwise the browser may wait forever for the error answer
       (async () => { while (!(await body.next()).done); })().catch(() => undefined);
       throw e;
     }
-    sendJson(res, 200, { ok: true, file: name });
   }
 
-  async function receive(body: AsyncIterator<Buffer>, name: string) {
+  async function receive(body: AsyncIterator<Buffer>, target: string): Promise<number> {
     // the first bytes decide whether it is an MP3 at all, before a file is created
     let head = Buffer.alloc(0);
     while (head.length < 3) {
@@ -143,7 +174,6 @@ export function createApi(cfg: ServerConfig) {
     if (head.length < 3 || (!isId3 && !isFrame)) throw new HttpError(415, 'not mp3');
 
     await mkdir(predigten, { recursive: true });
-    const target = join(predigten, name);
     const out = await open(target, 'wx').catch(e => { // 'wx': never overwrite
       throw (e as NodeJS.ErrnoException).code === 'EEXIST' ? new HttpError(409, 'exists') : e;
     });
@@ -164,7 +194,21 @@ export function createApi(cfg: ServerConfig) {
       await unlink(target).catch(() => undefined); // no half-written file (too large, connection lost)
       throw e;
     }
-    log(`upload ${name} (${Math.round(size / 1024)} kB)`);
+    return size;
+  }
+
+  /** GET /api/uploads/<file>.mp3 (admin), with ?original=1 the file as first published (see replace). */
+  async function sendUpload(req: IncomingMessage, res: ServerResponse, name: string) {
+    const original = new URL(req.url ?? '', 'http://x').searchParams.get('original') === '1';
+    const file = original ? join(predigten, ORIGINALS, name) : join(predigten, name);
+    const s = await stat(file).catch(() => null);
+    if (!s?.isFile()) throw new HttpError(404, 'not found');
+    res.statusCode = 200;
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('Content-Type', 'audio/mpeg');
+    res.setHeader('Content-Length', String(s.size));
+    res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
+    await pipeline(createReadStream(file), res);
   }
 
   async function route(req: IncomingMessage, res: ServerResponse, path: string): Promise<void> {
@@ -254,8 +298,17 @@ export function createApi(cfg: ServerConfig) {
       const names = (await readdir(predigten).catch(() => [])).filter(n => FILE_NAME.test(n)).sort().reverse();
       return sendJson(res, 200, await Promise.all(names.map(async name => {
         const s = await stat(join(predigten, name));
-        return { name, size: s.size, modified: s.mtime.toISOString() };
+        return { name, size: s.size, modified: s.mtime.toISOString(), original: existsSync(join(predigten, ORIGINALS, name)) };
       })));
+    }
+    const uploadMatch = /^\/api\/uploads\/([^/]+)$/.exec(path);
+    if (uploadMatch) {
+      admin();
+      let name;
+      try { name = decodeURIComponent(uploadMatch[1]); } catch { throw new HttpError(400, 'bad name'); }
+      if (!FILE_NAME.test(name)) throw new HttpError(400, 'bad name');
+      if (method === 'GET') return sendUpload(req, res, name);
+      if (method === 'PUT') return replace(req, res, name);
     }
     throw new HttpError(404, 'not found');
   }

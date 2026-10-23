@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createServer, type Server } from 'node:http';
-import { mkdtemp, readFile, rm, writeFile, mkdir } from 'node:fs/promises';
+import { mkdtemp, readFile, readdir, rm, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
@@ -298,6 +298,38 @@ describe('upload', () => {
     expect((await fetch(`${base}/api/uploads`, as(m))).status).toBe(403);
     const list = await (await fetch(`${base}/api/uploads`, as(a))).json();
     expect(list.map((f: { name: string }) => f.name)).toContain('predigt_2030-01-06.mp3');
+  });
+
+  it('lets the admin download and replace a published file, keeping the first version', async () => {
+    const m = (await login('mischer', 'mischer-password')).cookie, a = (await login('admin', 'admin-password')).cookie;
+    const url = `${base}/api/uploads/replace-me.mp3`;
+    const put = (cookie: string, body: BodyInit, target = url, type = 'audio/mpeg') =>
+      fetch(target, { method: 'PUT', headers: { Cookie: cookie, 'Content-Type': type }, body });
+    const listed = async () => (await (await fetch(`${base}/api/uploads`, as(a))).json() as { name: string; original: boolean }[])
+      .find(f => f.name === 'replace-me.mp3');
+
+    expect((await put(a, 'ID3 v1')).status).toBe(404); // only published files
+    expect((await mp3(m, 'replace-me.mp3', 'ID3 v1')).status).toBe(200);
+    expect((await fetch(url, as(m))).status).toBe(403);
+    expect((await put(m, 'ID3 v2')).status).toBe(403);
+    const got = await fetch(url, as(a));
+    expect([got.status, got.headers.get('content-type'), await got.text()]).toEqual([200, 'audio/mpeg', 'ID3 v1']);
+    expect((await fetch(`${url}?original=1`, as(a))).status).toBe(404);
+    expect((await listed())?.original).toBe(false);
+
+    expect((await put(a, 'ID3 v2')).status).toBe(200);
+    expect((await put(a, 'ID3 v3')).status).toBe(200);
+    expect(await (await fetch(url, as(a))).text()).toBe('ID3 v3');
+    expect(await (await fetch(`${url}?original=1`, as(a))).text()).toBe('ID3 v1'); // the first version stays
+    expect((await listed())?.original).toBe(true);
+
+    expect((await put(a, 'not an mp3')).status).toBe(415);
+    expect((await put(a, 'ID3' + 'x'.repeat(2 * 1024 * 1024))).status).toBe(413);
+    expect(await (await fetch(url, as(a))).text()).toBe('ID3 v3'); // a failed replacement changes nothing
+    expect((await fetch(`${base}/api/uploads/..%2Fsettings.json`, as(a))).status).toBe(400);
+    expect((await fetch(`${base}/api/uploads/%E0%A4%A.mp3`, as(a))).status).toBe(400);
+    expect((await fetch(`${base}/api/uploads/missing.mp3`, as(a))).status).toBe(404);
+    expect((await readdir(join(dir, 'data/predigten'))).filter(n => n.endsWith('.tmp'))).toEqual([]); // no temporary files left
   });
 });
 

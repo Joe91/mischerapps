@@ -1,6 +1,6 @@
 # Mischer-Apps – Predigt-Schnitt & Termine
 
-Zwei Apps unter einer Startseite, betrieben auf dem eigenen NAS (ein Docker-Container: Web-App + kleiner Server):
+Apps unter einer Startseite, betrieben auf dem eigenen NAS (ein Docker-Container: Web-App + kleiner Server):
 
 - **Predigt-Schnitt** (`apps/predigt-schnitt/`) – Browser-App, die eine Gottesdienst-Aufnahme (MP3) lädt, die Predigt
   automatisch erkennt, die Lautheit normalisiert, als MP3 exportiert und auf das NAS hochlädt.
@@ -10,6 +10,10 @@ Zwei Apps unter einer Startseite, betrieben auf dem eigenen NAS (ein Docker-Cont
   Ja / Vielleicht / Nein. Alle sehen, wer was geantwortet hat und wer noch offen ist. Der Admin trägt pro Termin
   Anlass, Uhrzeit, Einteilung und Hinweise ein; sagt eine eingeteilte Person ab, wird das markiert.
   Alles steht in einer Excel-Datei auf dem NAS ([Termine](#termine)).
+- **Predigt nachbearbeiten** (`apps/predigt-nachbearbeiten/`, nur Admin) – eine schon veröffentlichte Predigt vom NAS
+  oder vom Rechner (auch mehrere nacheinander) noch einmal mit den aktuellen Einstellungen bearbeiten (z. B. Hall & Rauschen
+  reduzieren) und auf dem NAS ersetzen
+  ([Nachbearbeiten](#predigt-nachbearbeiten-nur-admin)).
 
 ## Benutzer
 
@@ -19,7 +23,7 @@ die nicht im Repository liegt ([Konfiguration](#konfiguration)).
 | Benutzer | Darf |
 | --- | --- |
 | `mischer` | Termine ansehen und beantworten · Aufnahmen schneiden und aufs NAS hochladen. Keine Einstellungen. |
-| `admin` | alles von `mischer` · Termine anlegen und bearbeiten · Excel-Tabelle herunter-/hochladen · Einstellungen (Lautheit, Export, Namensschema, Cover, Anzahl Sonntage, zusätzliche Upload-Ziele) |
+| `admin` | alles von `mischer` · Termine anlegen und bearbeiten · veröffentlichte Predigten nachbearbeiten und ersetzen · Excel-Tabelle herunter-/hochladen · Einstellungen (Lautheit, Export, Namensschema, Cover, Anzahl Sonntage, zusätzliche Upload-Ziele) |
 
 Die Einstellungen des Admins gelten für alle (sie liegen auf dem Server, `settings.json`). Die Oberfläche blendet für
 `mischer` alles Weitere aus; der Server prüft jede Anfrage selbst. Falsche Passwörter bremsen den Zugang
@@ -56,6 +60,7 @@ data/termine.backup.xlsx   Stand vor dem letzten Hochladen einer Tabelle
 data/einsatzplan.xlsx      Einsatzplan (Mischer, Beamer, Musikteam), so wie der Admin ihn hochgeladen hat
 data/settings.json         gemeinsame Einstellungen (vom Admin)
 data/predigten/            hochgeladene MP3-Dateien
+data/predigten/original/   die zuerst veröffentlichte Fassung nachbearbeiteter Predigten
 data/.session-secret       Schlüssel für die Anmelde-Cookies (wird automatisch angelegt)
 ```
 
@@ -181,7 +186,8 @@ docker run --rm -p 9120:8080 -v /tmp/mischer/config:/config:ro -v /tmp/mischer/d
 
 Die API (alle unter `/api`, Anmeldung per Cookie): `POST login` / `logout`, `GET me`, `GET`/`POST termine`,
 `GET termine/export` und `POST termine/import` (Admin), `GET plan` (auch ohne Anmeldung, dann gekürzt) und `POST plan/import` (Admin, die xlsx als Body), `GET`/`PUT settings/<app>` (PUT: Admin), `POST upload?name=<datei>.mp3` (die MP3 als Body, `Content-Type: audio/mpeg`; wird direkt auf die Platte geschrieben),
-`GET uploads` (Admin), `GET health`. Fehlercodes des Uploads: `401` nicht angemeldet, `400` ungültiger Name, `409` Datei existiert schon,
+`GET uploads` (Admin; je Datei `original: true`, wenn sie schon ersetzt wurde), `GET uploads/<datei>.mp3` (Admin, mit `?original=1` die zuerst
+veröffentlichte Fassung), `PUT uploads/<datei>.mp3` (Admin: ersetzt eine vorhandene Datei, die MP3 als Body), `GET health`. Fehlercodes des Uploads: `401` nicht angemeldet, `400` ungültiger Name, `409` Datei existiert schon,
 `413` zu groß, `415` keine MP3.
 
 ## Ablauf in der App
@@ -215,6 +221,32 @@ Die API (alle unter `/api`, Anmeldung per Cookie): `POST login` / `logout`, `GET
    ± 30 s); Marker innerhalb dieses Bereichs zu verschieben braucht keinen neuen Durchgang.
 4. **Upload** – auf das NAS (Ordner `predigten` im Datenverzeichnis), mit Fortschritt; alternativ Herunterladen.
    Vorhandene Dateien werden nie überschrieben. Der Admin kann zusätzlich einen Cloud-Ordner als Ziel eintragen.
+
+## Predigt nachbearbeiten (nur Admin)
+
+Für Predigten, die schon veröffentlicht sind, z. B. ältere Aufnahmen von vor der Hall- und Rauschreduzierung.
+Die Kachel sieht nur der Admin; der Server lässt nur ihn zu.
+
+1. **Predigten wählen** – zwei Quellen:
+   - *Auf dem NAS:* Liste aller Dateien in `data/predigten/` (Suche nach Namensteil, z. B. `2606`), *Bearbeiten* lädt eine davon.
+   - *Vom Rechner:* MP3-Dateien hineinziehen oder auswählen, auch mehrere auf einmal. Jede einzeln *Bearbeiten* oder
+     **Alle nacheinander bearbeiten und hochladen**: Die Dateien laufen dann ohne weiteres Zutun mit den Einstellungen aus
+     Schritt 2 durch und landen auf dem NAS (Status je Datei in der Liste, *Nach dieser Datei anhalten* möglich).
+     Der Name auf dem NAS ist der Dateiname, bereinigt (`predigt-eag-261018(1).mp3` → `predigt-eag-261018-1.mp3`).
+2. **Bearbeitung** – Lautheit, Format, Hochpass, Kompression, Hall & Rauschen für alle Dateien auf der Seite. Voreingestellt
+   sind die Standardwerte von Predigt-Schnitt, aber ohne Ein- und Ausblenden (das haben veröffentlichte Dateien schon);
+   Änderungen gelten nur hier, die Standardwerte bleiben unverändert.
+3. **Datei** – die ganze Datei (kein Schnitt). Titel, Prediger/in, Album, Jahr, Kommentar und Cover werden aus der Datei
+   übernommen und können geändert werden; hat der Admin ein Cover eingestellt, kann es das bisherige ersetzen. Hat eine Datei
+   vom Rechner keine Tags, kommen sie von der gleichnamigen Datei auf dem NAS. Die Berechnung startet sofort im Hintergrund
+   (15 min Predigt ≈ 45 s, 26 min ≈ 75 s auf einem 12-Kern-PC, mit Entrauschen). *MP3 erstellen*, vorher/nachher anhören, dann
+   hochladen oder herunterladen.
+
+**Ersetzen:** Liegt auf dem NAS schon eine Datei mit dem Namen, wird sie ersetzt (die App fragt vorher, beim Stapel einmal für alle);
+sonst kommt eine neue dazu. Beim ersten Ersetzen verschiebt der Server die bisherige Datei nach `data/predigten/original/`;
+spätere Durchgänge überschreiben nur die aktuelle Fassung. Die Liste markiert solche Dateien mit „nachbearbeitet“, und ein
+erneutes Bearbeiten vom NAS startet von der ersten Fassung (nicht doppelt gefiltert); die aktuelle lässt sich per Knopf stattdessen laden.
+Zurück zur ersten Fassung: die Datei aus `original/` in File Station über die aktuelle kopieren.
 
 ## Zusätzliches Upload-Ziel: Cloud-Ordner (optional, nur Admin)
 
@@ -257,6 +289,7 @@ falls gerade keine echte zur Hand ist.
 index.html, src/home.ts      Startseite: Einsatzplan und Kacheln aus apps.json
 packages/plan/               Einsatzplan aus der Excel-Tabelle der Gemeinde lesen
 apps/predigt-schnitt/        Predigt-Schnitt (Schritte unter src/steps/)
+apps/predigt-nachbearbeiten/ Predigt nachbearbeiten (nur Admin; nutzt die Bausteine von Predigt-Schnitt)
 apps/termine/                Termine (src/model.ts: Datenmodell, src/xlsx.ts: Excel-Tabelle, src/api.ts: Zugriff auf den Server)
 packages/audio-core/         Decoder, Frame-Index, Merkmale, Erkennung, Lautheit, DSP, Pipeline, Worker
 packages/denoise/            Hall-/Rauschreduzierung: df3.wasm (DeepFilterNet3 mit Modell) und Wrapper;
@@ -272,7 +305,7 @@ scripts/                     bench.ts (Erkennungs-Benchmark), make-synthetic.py,
 dev-server.ts                bindet die API in `npm run dev` / `preview` ein
 ```
 
-Neue App: Ordner unter `apps/`, Eintrag in `apps.json` und in `vite.config.ts` (`rollupOptions.input`).
+Neue App: Ordner unter `apps/`, Eintrag in `apps.json` (mit `"adminOnly": true` nur für den Admin sichtbar) und in `vite.config.ts` (`rollupOptions.input`).
 
 ## Bekannte Grenzen / noch offen
 

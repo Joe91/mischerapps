@@ -213,7 +213,8 @@ export function createPrepareView(ctx: Ctx) {
  * The options the admin sets as defaults, editable for this one recording. Changes are not saved:
  * they live in ctx.state.overrides and are gone with the next recording (or when the view is closed).
  */
-export function createAdvancedPanel(ctx: Ctx, details: HTMLElement, onChange: () => void) {
+export function createAdvancedPanel(ctx: Ctx, details: HTMLElement | null, onChange: () => void,
+  note = 'Gilt nur für diese Aufnahme – die Standardwerte legt der Admin fest.') {
   const set = <K extends keyof Choices>(key: K, value: Choices[K]) => {
     if (value === ctx.settings[key]) delete ctx.state.overrides[key];
     else ctx.state.overrides[key] = value;
@@ -249,7 +250,7 @@ export function createAdvancedPanel(ctx: Ctx, details: HTMLElement, onChange: ()
   const el = h('div', { class: 'advanced' },
     h('div', { class: 'advanced-head' },
       h('h3', null, 'Erweiterte Einstellungen'),
-      h('span', { class: 'muted small' }, 'Gilt nur für diese Aufnahme – die Standardwerte legt der Admin fest.'),
+      h('span', { class: 'muted small' }, note),
     ),
     h('div', { class: 'adv-groups' },
       group('Lautheit & Format', h('label', null, 'Zielwert', lp), h('label', null, 'Format (bestimmt Mono/Stereo)', ep)),

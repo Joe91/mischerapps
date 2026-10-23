@@ -13,6 +13,8 @@ export function describeUploadError(status: number, body: string): string {
       ? 'Der Server hat den Dateinamen abgelehnt (erlaubt: Buchstaben, Ziffern, . _ - und Endung .mp3).'
       : `Der Server hat die Datei nicht angenommen${b ? ` (${b.slice(0, 100)})` : ''}.`;
     case 401: return 'Die Anmeldung ist abgelaufen. Bitte die Seite neu laden und anmelden (die bearbeitete Datei geht dabei verloren – vorher herunterladen).';
+    case 403: return 'Das darf nur der Admin.';
+    case 404: return 'Die Datei gibt es auf dem Server nicht (mehr).';
     case 409: return 'Der Server hat die Datei abgelehnt: Datei existiert bereits. Bitte Dateinamen ändern.';
     case 413: return 'Der Server hat die Datei abgelehnt: Datei zu groß.';
     case 415: return 'Der Server hat die Datei abgelehnt: keine gültige MP3-Datei.';
@@ -22,11 +24,18 @@ export function describeUploadError(status: number, body: string): string {
 }
 
 /** Uploads to the server this app is served from; the login cookie is sent automatically. */
-export function uploadFile(url: string, file: Blob, name: string,
+export const uploadFile = (url: string, file: Blob, name: string, onProgress: (p: number) => void) =>
+  send('POST', `${url}${url.includes('?') ? '&' : '?'}name=${encodeURIComponent(name)}`, file, onProgress);
+
+/** Admin: replaces the published file `name` on the server (the first version is kept there, see server/api.ts). */
+export const replaceUpload = (name: string, file: Blob, onProgress: (p: number) => void) =>
+  send('PUT', `/api/uploads/${encodeURIComponent(name)}`, file, onProgress);
+
+function send(method: 'POST' | 'PUT', url: string, file: Blob,
   onProgress: (p: number) => void): { promise: Promise<string>; abort: () => void } {
   const xhr = new XMLHttpRequest(); // XHR, because fetch has no upload progress
   const promise = new Promise<string>((resolve, reject) => {
-    xhr.open('POST', `${url}${url.includes('?') ? '&' : '?'}name=${encodeURIComponent(name)}`);
+    xhr.open(method, url);
     xhr.setRequestHeader('Content-Type', 'audio/mpeg');
     xhr.upload.onprogress = e => e.lengthComputable && onProgress(e.loaded / e.total);
     xhr.onload = () => xhr.status >= 200 && xhr.status < 300
