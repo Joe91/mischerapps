@@ -86,7 +86,15 @@
 .profiles { display: flex; flex-direction: column; gap: .6rem; margin-bottom: .6rem; }
 .profile { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem .75rem; align-items: end; padding: .7rem; border-radius: 8px; background: var(--surface-2); }
 .profile-actions { grid-column: 1 / -1; display: flex; justify-content: space-between; align-items: center; }
+/* the defaults reuse the advanced panel's groups, two columns in the dialog */
+.settings .adv-groups { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.settings p + .adv-groups { margin-top: .9rem; }
+.unit-label { min-width: 1.6rem; }
+.adv-col { display: flex; flex-direction: column; gap: 1.1rem; min-width: 0; }
+.adv-group .sub { margin-left: 1.6rem; }
+.adv-group .disabled { opacity: .5; }
 .cover-preview { width: 56px; height: 56px; object-fit: cover; border-radius: 6px; border: 1px solid var(--border); }
 @media (max-width: 720px) {
   .profile { grid-template-columns: 1fr; }
+  .settings .adv-groups { grid-template-columns: 1fr; }
 }

@@ -2,8 +2,8 @@ import { DENOISE_ATTEN_DB } from '../../../packages/denoise/denoise';
 import { h, download, toast } from '../../../packages/ui-kit/dom';
 import type { Ctx } from './context';
 import {
-  CLOUD_KINDS, EXPORT_PRESETS, LOUDNESS_PRESETS, UPLOAD_KINDS, newId, normalizeSettings, profileKind, settingsStore, stripTokens,
-  type ExportPresetId, type LoudnessPresetId, type Settings, type UploadKind, type UploadProfile,
+  CLOUD_KINDS, EXPORT_PRESETS, LOUDNESS_PRESETS, SOUND_OPTIONS, UPLOAD_KINDS, newId, normalizeSettings, profileKind, settingsStore, stripTokens,
+  type ExportPresetId, type LoudnessPresetId, type Settings, type SoundOption, type UploadKind, type UploadProfile,
 } from './settings';
 
 /** Settings dialog (admin only). Edits a copy; "Speichern" stores it here and, for the shared part, on the server. */
@@ -16,22 +16,24 @@ export function openSettings(ctx: Ctx, onSaved?: () => void) {
     input.addEventListener('input', () => set(input.value));
     return h('label', null, label, input);
   };
-  const number = (label: string, get: () => number, set: (v: number) => void, attrs: Record<string, unknown> = {}) => {
-    const input = h('input', { type: 'number', ...attrs, value: String(get()) });
-    input.addEventListener('change', () => { const v = Number(input.value); if (!isNaN(v)) set(v); });
-    return h('label', null, label, input);
-  };
   const select = (label: string, options: Record<string, { label: string }>, get: () => string, set: (v: string) => void) => {
     const el = h('select', null, ...Object.entries(options).map(([k, o]) => h('option', { value: k }, o.label)));
     el.value = get();
     el.addEventListener('change', () => set(el.value));
     return h('label', null, label, el);
   };
-  const check = (label: string, get: () => boolean, set: (v: boolean) => void) => {
-    const el = h('input', { type: 'checkbox', checked: get() });
-    el.addEventListener('change', () => set(el.checked));
-    return h('label', { class: 'check' }, el, label);
+  // number rows, groups and checkboxes look like the advanced panel in the export step
+  const amount = (label: string, unit: string, get: () => number, set: (v: number) => void, attrs: Record<string, unknown> = {}) => {
+    const input = h('input', { type: 'number', inputmode: 'decimal', ...attrs, value: String(get()) });
+    input.addEventListener('change', () => { const v = Number(input.value); if (!isNaN(v)) set(v); });
+    return { input, el: h('label', { class: 'inline' }, h('span', null, label), h('span', { class: 'unit' }, input, h('span', { class: 'unit-label' }, unit))) };
   };
+  const sound = (key: SoundOption) => {
+    const input = h('input', { type: 'checkbox', checked: draft[key] });
+    const { label, hint } = SOUND_OPTIONS[key];
+    return { input, el: h('label', { class: 'check-hint' }, input, h('span', null, label), h('small', null, hint)) };
+  };
+  const group = (title: string, ...children: Node[]) => h('div', { class: 'adv-group' }, h('h4', null, title), ...children);
 
   // ---- upload profiles ----
   const profileList = h('div', { class: 'profiles' });
@@ -111,6 +113,18 @@ export function openSettings(ctx: Ctx, onSaved?: () => void) {
     }
   });
 
+  // ---- sound ----
+  const hp = sound('highpass'), comp = sound('compressor'), dn = sound('denoise');
+  const dnDb = amount(`Stärke (Standard ${DENOISE_ATTEN_DB} dB)`, 'dB', () => draft.denoiseDb, v => { draft.denoiseDb = v; }, { min: 3, max: 40, step: 1 });
+  dnDb.el.classList.add('sub');
+  const syncSound = () => {
+    for (const [key, o] of [['highpass', hp], ['compressor', comp], ['denoise', dn]] as const) draft[key] = o.input.checked;
+    dnDb.input.disabled = !draft.denoise;
+    dnDb.el.classList.toggle('disabled', !draft.denoise);
+  };
+  for (const o of [hp, comp, dn]) o.input.addEventListener('change', syncSound);
+  syncSound();
+
   const body = h('div', { class: 'dlg-body' },
     h('fieldset', null, h('legend', null, 'Upload-Ziele'),
       h('p', { class: 'muted small' }, 'Normalerweise geht der Upload auf dieses NAS. Zusätzlich lässt sich ein Cloud-Ordner eintragen: ' +
@@ -130,16 +144,19 @@ export function openSettings(ctx: Ctx, onSaved?: () => void) {
     h('fieldset', null, h('legend', null, 'Voreinstellungen'),
       h('p', { class: 'muted small' }, 'Diese Werte werden nach dem Schnitt automatisch angewendet. Im Export lassen sie sich über „Erweitert“ ' +
         'für eine einzelne Aufnahme ändern (ohne die Voreinstellung zu verändern).'),
-      h('div', { class: 'grid' },
-        select('Lautheit', LOUDNESS_PRESETS, () => draft.loudnessPreset, v => { draft.loudnessPreset = v as LoudnessPresetId; }),
-        select('Export-Format', EXPORT_PRESETS, () => draft.exportPreset, v => { draft.exportPreset = v as ExportPresetId; }),
-        number('Einblenden (s)', () => draft.fadeIn, v => { draft.fadeIn = v; }, { min: 0, max: 10, step: 0.1 }),
-        number('Ausblenden (s)', () => draft.fadeOut, v => { draft.fadeOut = v; }, { min: 0, max: 10, step: 0.1 }),
-        number('Max. Anhebung (dB)', () => draft.maxGainDb, v => { draft.maxGainDb = v; }, { min: 0, max: 80, step: 1 }),
-        check('Hochpass 80 Hz', () => draft.highpass, v => { draft.highpass = v; }),
-        check('Sanfte Kompression 2:1', () => draft.compressor, v => { draft.compressor = v; }),
-        check('Hall & Rauschen reduzieren (KI, dauert etwas länger)', () => draft.denoise, v => { draft.denoise = v; }),
-        number(`Stärke Hall & Rauschen (dB, Standard ${DENOISE_ATTEN_DB})`, () => draft.denoiseDb, v => { draft.denoiseDb = v; }, { min: 3, max: 40, step: 1 }),
+      h('div', { class: 'adv-groups' },
+        h('div', { class: 'adv-col' },
+          group('Lautheit & Format',
+            select('Zielwert', LOUDNESS_PRESETS, () => draft.loudnessPreset, v => { draft.loudnessPreset = v as LoudnessPresetId; }),
+            select('Format (bestimmt Mono/Stereo)', EXPORT_PRESETS, () => draft.exportPreset, v => { draft.exportPreset = v as ExportPresetId; }),
+            amount('Max. Anhebung', 'dB', () => draft.maxGainDb, v => { draft.maxGainDb = v; }, { min: 0, max: 80, step: 1 }).el,
+          ),
+          group('Übergänge',
+            amount('Einblenden', 's', () => draft.fadeIn, v => { draft.fadeIn = v; }, { min: 0, max: 10, step: 0.1 }).el,
+            amount('Ausblenden', 's', () => draft.fadeOut, v => { draft.fadeOut = v; }, { min: 0, max: 10, step: 0.1 }).el,
+          ),
+        ),
+        group('Klang', hp.el, comp.el, dn.el, dnDb.el),
       ),
     ),
     h('fieldset', null, h('legend', null, 'Dateiname & Tags'),
@@ -154,9 +171,11 @@ export function openSettings(ctx: Ctx, onSaved?: () => void) {
         h('button', { class: 'btn btn-sm btn-ghost', type: 'button', onclick: () => { draft.coverDataUrl = ''; coverInput.value = ''; showCover(); } }, 'Entfernen')),
     ),
     h('fieldset', null, h('legend', null, 'Erkennung'),
-      h('div', { class: 'grid' },
-        number('Mindestlänge Predigt (min)', () => draft.minSermonMin, v => { draft.minSermonMin = v; }, { min: 1, max: 60, step: 1 }),
-        number('Pausen zusammenführen bis (s)', () => draft.mergeGapSec, v => { draft.mergeGapSec = v; }, { min: 0, max: 60, step: 1 }),
+      h('div', { class: 'adv-groups' },
+        h('div', { class: 'adv-group' },
+          amount('Mindestlänge Predigt', 'min', () => draft.minSermonMin, v => { draft.minSermonMin = v; }, { min: 1, max: 60, step: 1 }).el,
+          amount('Pausen zusammenführen bis', 's', () => draft.mergeGapSec, v => { draft.mergeGapSec = v; }, { min: 0, max: 60, step: 1 }).el,
+        ),
       ),
       h('p', { class: 'muted small' }, 'Wirkt beim nächsten Laden einer Datei.'),
     ),

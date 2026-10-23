@@ -1,7 +1,7 @@
 import { h, fmtDb, fmtNum, progressBar } from '../../../../packages/ui-kit/dom';
 import { covers, type DenoiseRange, type Measurement, type ProcessOptions } from '../../../../packages/audio-core/pipeline';
 import { choices, processOptions, encodeOptions, measurementKey, type Ctx, type Prepared } from '../context';
-import { EXPORT_PRESETS, LOUDNESS_PRESETS, type Choices, type ExportPresetId, type LoudnessPresetId } from '../settings';
+import { EXPORT_PRESETS, LOUDNESS_PRESETS, SOUND_OPTIONS, type Choices, type ExportPresetId, type LoudnessPresetId, type SoundOption } from '../settings';
 
 type Progress = (p: number, label: string) => void;
 
@@ -233,9 +233,10 @@ export function createAdvancedPanel(ctx: Ctx, details: HTMLElement, onChange: ()
     });
     return { input, el: h('label', { class: 'inline' }, h('span', null, label), h('span', { class: 'unit' }, input, 's')) };
   };
-  const check = (label: string, hint: string, key: 'highpass' | 'compressor' | 'denoise') => {
+  const check = (key: SoundOption) => {
     const input = h('input', { type: 'checkbox' });
     input.addEventListener('change', () => set(key, input.checked));
+    const { label, hint } = SOUND_OPTIONS[key];
     return { input, el: h('label', { class: 'check-hint' }, input, h('span', null, label), h('small', null, hint)) };
   };
   const group = (title: string, ...children: Node[]) => h('div', { class: 'adv-group' }, h('h4', null, title), ...children);
@@ -243,9 +244,7 @@ export function createAdvancedPanel(ctx: Ctx, details: HTMLElement, onChange: ()
   const lp = select<LoudnessPresetId>(LOUDNESS_PRESETS, 'loudnessPreset');
   const ep = select<ExportPresetId>(EXPORT_PRESETS, 'exportPreset');
   const fi = seconds('Einblenden', 'fadeIn'), fo = seconds('Ausblenden', 'fadeOut');
-  const hp = check('Hochpass 80 Hz', 'Entfernt Trittschall, Rumpeln und Brummen – empfohlen für Sprache', 'highpass');
-  const comp = check('Sanfte Kompression 2:1', 'Gleicht unterschiedliche Abstände zum Mikrofon aus', 'compressor');
-  const dn = check('Hall & Rauschen reduzieren', 'KI-Filter: weniger Nachhall des Raums und Hintergrundrauschen – dauert je nach Rechner etwa 1–3 Minuten', 'denoise');
+  const hp = check('highpass'), comp = check('compressor'), dn = check('denoise');
 
   const el = h('div', { class: 'advanced' },
     h('div', { class: 'advanced-head' },

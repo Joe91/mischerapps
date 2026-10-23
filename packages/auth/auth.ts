@@ -18,9 +18,12 @@ async function fetchSession(): Promise<Session | null> {
   return res.json();
 }
 
+/** Logs out and returns to the start page (the apps link it as .home-link; the start page itself just reloads). */
 export async function logout() {
   try { await fetch('/api/logout', { method: 'POST' }); } catch { /* the cookie expires anyway */ }
-  location.reload();
+  const home = document.querySelector<HTMLAnchorElement>('a.home-link');
+  if (home) location.replace(home.href);
+  else location.reload();
 }
 
 /**

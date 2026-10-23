@@ -37,6 +37,14 @@ export const EXPORT_PRESETS = {
 } as const satisfies Record<string, { label: string; channels: 1 | 2; kbps: EncodeOptions['kbps'] }>;
 export type ExportPresetId = keyof typeof EXPORT_PRESETS;
 
+/** Sound options, labelled the same in the settings dialog and the advanced panel. */
+export const SOUND_OPTIONS = {
+  highpass: { label: 'Hochpass 80 Hz', hint: 'Entfernt Trittschall, Rumpeln und Brummen – empfohlen für Sprache' },
+  compressor: { label: 'Sanfte Kompression 2:1', hint: 'Gleicht unterschiedliche Abstände zum Mikrofon aus' },
+  denoise: { label: 'Hall & Rauschen reduzieren', hint: 'KI-Filter: weniger Nachhall des Raums und Hintergrundrauschen – dauert je nach Rechner etwa 1–3 Minuten' },
+} as const;
+export type SoundOption = keyof typeof SOUND_OPTIONS;
+
 export interface Settings {
   profiles: UploadProfile[];
   activeProfileId: string;
