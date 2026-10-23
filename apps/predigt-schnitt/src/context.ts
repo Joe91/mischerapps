@@ -27,6 +27,8 @@ export interface AppState {
   meta: Meta;
   fileName: string;
   fileNameEdited: boolean;
+  /** details typed in by hand: the eAg-Übersicht does not overwrite them */
+  metaEdited: Set<string>;
   /** advanced view open: the processing options below may differ from the admin's defaults */
   advanced: boolean;
   /** options changed in the advanced view for this recording; everything else follows the defaults */

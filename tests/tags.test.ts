@@ -17,7 +17,7 @@ const utf8 = (s: string) => [...new TextEncoder().encode(s)];
 describe('readTags', () => {
   it('reads back what tagMp3 wrote', () => {
     const cover = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0, 1, 2]);
-    const tags = { title: 'Predigt über Lukas 18 – „Glaube“', artist: 'Jörg Müller', album: 'EAG', year: 2026, comment: 'Lk 18,1-8 · 2026-10-18' };
+    const tags = { title: 'Predigt über Lukas 18 – „Glaube“', artist: 'Jörg Müller', album: 'EAG', year: 2026, comment: 'Lk 18,1-8 · 2026-10-18', track: 4 };
     const t = readTags(tagMp3(FRAME, { ...tags, cover: { data: cover.buffer, mime: 'image/png' } }));
     expect({ ...t, cover: undefined }).toEqual({ ...tags, cover: undefined });
     expect(t.cover?.mime).toBe('image/png');

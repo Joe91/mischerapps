@@ -83,7 +83,7 @@ const PROPFIND_BODY = '<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop>'
   '<d:getcontentlength/><d:getlastmodified/><d:resourcetype/></d:prop></d:propfind>';
 
 /** The text of the first <prefix:name> element in `xml` (namespace prefixes vary between servers). */
-const element = (xml: string, name: string) =>
+export const element = (xml: string, name: string) =>
   new RegExp(`<(?:[\\w-]+:)?${name}\\b[^>]*>([\\s\\S]*?)</(?:[\\w-]+:)?${name}>`).exec(xml)?.[1];
 const blocks = (xml: string, name: string) => xml.split(new RegExp(`<(?:[\\w-]+:)?${name}\\b[^>]*>`)).slice(1);
 const unescapeXml = (s: string) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").replace(/&amp;/g, '&');
@@ -103,18 +103,16 @@ export function parseMultistatus(xml: string): StoredFile[] {
   return files;
 }
 
-export class WebDavStore implements SermonStore {
-  readonly label = 'OpenCloud';
+/** Requests to OpenCloud with the app token (Basic auth) and its errors, shared by the sermon folder and CloudFile. */
+export class WebDav {
   private auth: string;
 
-  constructor(private cloud: CloudConfig, private fetchImpl: typeof fetch = fetch) {
+  constructor(cloud: Pick<CloudConfig, 'user' | 'token'>, private fetchImpl: typeof fetch = fetch) {
     this.auth = 'Basic ' + Buffer.from(`${cloud.user}:${cloud.token}`).toString('base64');
   }
 
-  private url(name = '') { return this.cloud.url + encodeURIComponent(name); }
-
   /** Any answer from the cloud; unreachable → StoreError 502 "cloud unreachable". */
-  private async request(method: string, url: string, init: RequestInit = {}): Promise<Response> {
+  async request(method: string, url: string, init: RequestInit = {}): Promise<Response> {
     try {
       return await this.fetchImpl(url, {
         ...init, method, redirect: 'manual',
@@ -127,11 +125,24 @@ export class WebDavStore implements SermonStore {
     }
   }
 
-  /** 401: token wrong or expired, 404: folder not found, … – the client turns these into messages. */
-  private failed(res: Response): StoreError {
+  /** 401: token wrong or expired, 404: not found, … – the client turns these into messages. */
+  failed(res: Response): StoreError {
     res.body?.cancel().catch(() => undefined);
     return new StoreError(502, `cloud ${res.status}`);
   }
+}
+
+export class WebDavStore implements SermonStore {
+  readonly label = 'OpenCloud';
+  private dav: WebDav;
+
+  constructor(private cloud: CloudConfig, fetchImpl: typeof fetch = fetch) {
+    this.dav = new WebDav(cloud, fetchImpl);
+  }
+
+  private url(name = '') { return this.cloud.url + encodeURIComponent(name); }
+  private request(method: string, url: string, init?: RequestInit) { return this.dav.request(method, url, init); }
+  private failed(res: Response) { return this.dav.failed(res); }
 
   async list() {
     const res = await this.request('PROPFIND', this.url(), {

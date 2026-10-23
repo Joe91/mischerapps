@@ -8,6 +8,8 @@ export interface Tags {
   album?: string;
   year?: number;
   comment?: string;
+  /** number within the album (the sermon series) */
+  track?: number;
   cover?: { data: ArrayBuffer; mime: string };
 }
 
@@ -18,6 +20,7 @@ export function tagMp3(mp3: Uint8Array, t: Tags): Uint8Array {
   if (t.album) w.setFrame('TALB', t.album);
   if (t.year) w.setFrame('TYER', t.year);
   if (t.comment) w.setFrame('COMM', { description: '', text: t.comment, language: 'deu' });
+  if (t.track) w.setFrame('TRCK', String(t.track));
   if (t.cover) w.setFrame('APIC', { type: 3, data: t.cover.data, description: 'Cover' });
   return new Uint8Array(w.addTag());
 }
@@ -48,7 +51,7 @@ export function id3Length(head: Uint8Array): number {
 }
 
 /**
- * Reads the tags tagMp3 writes (title, artist, album, year, comment, cover) from an ID3v2.3/2.4 tag at
+ * Reads the tags tagMp3 writes (title, artist, album, year, comment, track, cover) from an ID3v2.3/2.4 tag at
  * the start of an MP3. Other frames, ID3v1 and unusual tags (unsynchronised, compressed) are ignored.
  */
 export function readTags(file: Uint8Array): Tags {
@@ -76,6 +79,7 @@ export function readTags(file: Uint8Array): Tags {
     else if (id === 'TPE1') t.artist = decodeText(enc, b.subarray(1));
     else if (id === 'TALB') t.album = decodeText(enc, b.subarray(1));
     else if (id === 'TYER' || id === 'TDRC') t.year = Number(decodeText(enc, b.subarray(1)).slice(0, 4)) || undefined;
+    else if (id === 'TRCK') t.track = parseInt(decodeText(enc, b.subarray(1)), 10) || undefined; // "4" or "4/8"
     else if (id === 'COMM') {
       // language (3 bytes), description, text; prefer the comment without description (the one tagMp3 writes)
       const textAt = skipTerminated(enc, b, 4);

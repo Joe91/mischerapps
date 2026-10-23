@@ -23,7 +23,7 @@ die nicht im Repository liegt ([Konfiguration](#konfiguration)).
 | Benutzer | Darf |
 | --- | --- |
 | `mischer` | Termine ansehen und beantworten · Aufnahmen schneiden und veröffentlichen. Keine Einstellungen. |
-| `admin` | alles von `mischer` · Termine anlegen und bearbeiten · veröffentlichte Predigten nachbearbeiten und ersetzen · Excel-Tabelle herunter-/hochladen · Einstellungen (Lautheit, Export, Namensschema, Cover, Anzahl Sonntage) |
+| `admin` | alles von `mischer` · Termine anlegen und bearbeiten · im Einsatzplan den Mischer eintragen · veröffentlichte Predigten nachbearbeiten und ersetzen · Excel-Tabelle herunter-/hochladen · Einstellungen (Lautheit, Export, Namensschema, Cover, Anzahl Sonntage) |
 
 Die Einstellungen des Admins gelten für alle (sie liegen auf dem Server, `settings.json`). Die Oberfläche blendet für
 `mischer` alles Weitere aus; der Server prüft jede Anfrage selbst. Falsche Passwörter bremsen den Zugang
@@ -58,7 +58,7 @@ Gespeichert wird alles im Ordner `data` (sichern wie jeden anderen Ordner):
 ```
 data/termine.xlsx          Termine und Antworten (Excel, auch von Hand bearbeitbar)
 data/termine.backup.xlsx   Stand vor dem letzten Hochladen einer Tabelle
-data/einsatzplan.xlsx      Einsatzplan (Mischer, Beamer, Musikteam), so wie der Admin ihn hochgeladen hat
+data/einsatzplan.xlsx      Einsatzplan (Mischer, Beamer, Musikteam): zuletzt aus OpenCloud gelesene Kopie (ohne cloud.plan: vom Admin hochgeladen)
 data/settings.json         gemeinsame Einstellungen (vom Admin)
 data/original/             die zuerst veröffentlichte Fassung nachbearbeiteter Predigten (Sicherung, nicht veröffentlicht)
 data/tmp/                  Uploads, während sie ankommen (wird beim Start geleert)
@@ -110,7 +110,9 @@ Auf dem NAS ist das `/volume1/docker/mischer/data/` (File Station: `docker` → 
   "cloud": {
     "url":   "https://cloud.example.org/remote.php/dav/spaces/…/",
     "user":  "…",
-    "token": "…"
+    "token": "…",
+    "plan":     "https://cloud.example.org/remote.php/dav/spaces/…/Musik/Musik_Mischer_Beamer.xlsx",
+    "overview": "https://cloud.example.org/remote.php/dav/spaces/…/Allgemein/eAg_Übersicht.xlsx"
   }
 }
 ```
@@ -155,20 +157,46 @@ oder `Nein`:
 
 ## Einsatzplan auf der Startseite
 
-Der Admin lädt auf der Startseite mit *⬆ Plan importieren* die Excel-Tabelle der Gemeinde hoch (z. B. `Musik_Mischer_Beamer.xlsx`).
+Der Einsatzplan ist die Excel-Tabelle der Gemeinde **in OpenCloud** (`Musik_Mischer_Beamer.xlsx`, in der Konfiguration `cloud.plan`).
+Der Server liest sie von dort, fragt alle zwei Minuten nach Änderungen (lädt sie aber nur neu, wenn sie sich geändert hat) und behält
+die zuletzt gelesene Fassung als `data/einsatzplan.xlsx`. Kann OpenCloud gerade nicht gelesen werden, zeigt die Startseite diese
+Fassung mit einem Hinweis. *↻ Aus OpenCloud aktualisieren* (Admin) liest sofort neu.
+
 Gelesen wird nur das **erste Blatt**: Die Spalten werden an ihrer Überschrift erkannt (`Datum`, `Musikteam`, `Teamleitung`,
 `Mischer`, `Beamer`, optional `Besonderheiten` und `Bemerkungen`), ihre Reihenfolge und weitere Spalten sind egal.
 
+- **Mischer eintragen (Admin):** ✎ neben dem Mischer eines Termins, Kürzel eingeben (Vorschläge aus der Legende; leer = niemand).
+  Der Server schreibt es in die Tabelle in OpenCloud – **nur diese eine Zelle**; Formatierung, andere Spalten und Blätter bleiben,
+  wie sie sind. Hat jemand die Tabelle gerade gespeichert, trägt der Server es in dessen Fassung ein (nichts geht verloren); ist sie
+  in OpenCloud gerade zum Bearbeiten geöffnet, meldet die App das. Zellen mit Formel werden nicht überschrieben. OpenCloud behält
+  die früheren Fassungen (Versionen).
 - Termine mit „kein eAg“ (in Musikteam, Teamleitung, Mischer, Beamer oder Besonderheiten) werden ausgeblendet.
 - Zeilen ohne Datum unter den Terminen dürfen eine Legende enthalten: Kürzel und daneben der volle Name (`KL | Udo Klaus`).
   Angemeldete sehen dann Namen statt Kürzel.
 - **Ohne Anmeldung** zeigt die Startseite die nächsten drei Termine – nur mit Kürzeln, ohne Namen und Bemerkungen.
   **Angemeldet** stehen die nächsten zwei Termine groß oben, alle weiteren (auch vergangene) hinter *Alle Termine anzeigen*.
-- Ein neuer Import ersetzt den alten Plan. Eine Datei ohne die Spalten „Datum“ und „Mischer“ wird abgelehnt, der alte Plan bleibt.
-  `data/einsatzplan.xlsx` kann auch direkt auf dem NAS ersetzt werden.
+- Ohne `cloud.plan` lädt der Admin die Tabelle mit *⬆ Plan importieren* hoch; ein neuer Import ersetzt den alten Plan (eine Datei ohne
+  die Spalten „Datum“ und „Mischer“ wird abgelehnt), und der Mischer wird in `data/einsatzplan.xlsx` eingetragen.
 - In der App **Termine** steht bei einem Termin ohne eigenes „Eingeteilt“ der Mischer aus dem Einsatzplan (markiert mit
-  *laut Einsatzplan*; ★ und Absage-Warnung gelten dafür genauso). Er wird nicht in `termine.xlsx` gespeichert, folgt also einem neu
-  importierten Plan. Ein eigener Eintrag unter *Bearbeiten* hat Vorrang; das Feld leeren schaltet zurück auf den Plan.
+  *laut Einsatzplan*; ★ und Absage-Warnung gelten dafür genauso). Er wird nicht in `termine.xlsx` gespeichert, folgt also dem
+  Plan. Ein eigener Eintrag unter *Bearbeiten* hat Vorrang; das Feld leeren schaltet zurück auf den Plan.
+
+## eAg-Übersicht: Angaben für die MP3
+
+Aus der Tabelle `eAg_Übersicht.xlsx` in OpenCloud (`cloud.overview`, ein Blatt pro Jahr) liest der Server je Termin **Spalte A**
+(Datum), **G** (Predigtreihe) und **K** (Prediger/in). Daraus füllt der Export die Angaben vor, sobald das Datum feststeht:
+
+- **Titel** „Reihe - Nr.“, z. B. `Zeit - 04` (die wievielte Predigt der Reihe, nach Datum gezählt; kommt ein Reihenname nach mehr als
+  zwei Monaten wieder, zählt er neu ab 1), **Album** = Predigtreihe, **Prediger/in**, und die Nummer als Track-Nummer der MP3.
+- Was von Hand eingetragen wurde, bleibt; ohne Eintrag für das Datum gelten die Vorgaben aus den Einstellungen.
+- Ein Datum zählt aus dem Blatt seines Jahres (die Blätter überschneiden sich am Jahreswechsel); gibt es kein solches Blatt, aus dem
+  vorigen. Der Server fragt alle fünf Minuten nach Änderungen.
+- Im Namensschema gibt es dafür `{reihe}` und `{nr}`.
+- *Predigt nachbearbeiten* ergänzt bei Dateien ohne Angaben (ältere Predigten) die fehlenden aus der Übersicht, mit dem Datum aus dem
+  Dateinamen (`predigt-eag-260628` → 28.06.2026) – auch beim Stapel.
+
+**Cover:** Ohne eigenes Bild in den Einstellungen bekommt jede MP3 das eAg-Logo als Cover (1400 × 1400 px,
+`apps/predigt-schnitt/src/cover/`, neu erzeugen mit `scripts/make-cover.sh`).
 
 ## Lokal entwickeln
 
@@ -197,7 +225,10 @@ docker run --rm -p 9120:8080 -v /tmp/mischer/config:/config:ro -v /tmp/mischer/d
 ```
 
 Die API (alle unter `/api`, Anmeldung per Cookie): `POST login` / `logout`, `GET me`, `GET`/`POST termine`,
-`GET termine/export` und `POST termine/import` (Admin), `GET plan` (auch ohne Anmeldung, dann gekürzt) und `POST plan/import` (Admin, die xlsx als Body), `GET`/`PUT settings/<app>` (PUT: Admin), `POST upload?name=<datei>.mp3` (veröffentlicht die MP3 aus dem Body, `Content-Type: audio/mpeg`),
+`GET termine/export` und `POST termine/import` (Admin), `GET plan` (auch ohne Anmeldung, dann gekürzt; `source`: `OpenCloud`/`NAS`,
+`syncError`), `POST plan/import` (Admin, die xlsx als Body; `409`, wenn der Plan aus OpenCloud kommt), `POST plan/refresh` (Admin),
+`POST plan/mischer` (Admin, `{ "date": "2026-11-01", "mischer": "JD" }`; `404` Datum fehlt, `409` gleichzeitig geändert, `423` gesperrt),
+`GET overview?date=2026-11-01` (eAg-Übersicht: `series`, `index`, `preacher`), `GET`/`PUT settings/<app>` (PUT: Admin), `POST upload?name=<datei>.mp3` (veröffentlicht die MP3 aus dem Body, `Content-Type: audio/mpeg`),
 `GET uploads` (Admin: die veröffentlichten Dateien; je Datei `original: true`, wenn sie schon ersetzt wurde), `GET uploads/<datei>.mp3` (Admin, mit `?original=1` die zuerst
 veröffentlichte Fassung), `PUT uploads/<datei>.mp3` (Admin: ersetzt eine veröffentlichte Datei, die MP3 als Body), `GET health`. `GET me` und `POST login`
 nennen in `target` das Ziel (`OpenCloud`, ohne Konfiguration `NAS`). Fehlercodes des Uploads: `401` nicht angemeldet, `400` ungültiger Name,
@@ -211,7 +242,8 @@ nennen in `target` das Ziel (`OpenCloud`, ohne Konfiguration `NAS`). Fehlercodes
 2. **Schnitt** – Vorschlag für Start/Ende als orange Region; Übersicht mit Sprache/Musik/Stille,
    Alternativ-Vorschläge, Vorhören, Feinjustieren (Tastatur: Leertaste, S/E, ←/→, Umschalt, P).
 3. **Export** – Titel, Prediger, Datum, Bibelstelle und Dateiname eintragen (Schema `predigt-eag-{jjmmdd}`,
-   z. B. `predigt-eag-260712.mp3`). Lautheit und Klang werden automatisch nach den Voreinstellungen des Admins
+   z. B. `predigt-eag-260712.mp3`); Titel, Album (Predigtreihe) und Prediger kommen vorausgefüllt aus der
+   [eAg-Übersicht](#eag-übersicht-angaben-für-die-mp3), das Cover ist das eAg-Logo. Lautheit und Klang werden automatisch nach den Voreinstellungen des Admins
    angepasst (Standard: −19 LUFS, höchstens +55 dB Anhebung, Hochpass 80 Hz, sanfte Kompression 2:1, Hall &
    Rauschen reduzieren, „Sprache hoch“ = Mono 96 kbps, 0,5 s Ausblenden – die Predigt endet meist mit „Amen“);
    Messung und MP3-Kodierung laufen schon im Hintergrund, während die Angaben ausgefüllt werden – „MP3 exportieren“
@@ -251,9 +283,10 @@ Die Kachel sieht nur der Admin; der Server lässt nur ihn zu.
 2. **Bearbeitung** – Lautheit, Format, Ein-/Ausblenden, Hochpass, Kompression, Hall & Rauschen für alle Dateien auf der Seite.
    Voreingestellt sind die Standardwerte von Predigt-Schnitt (auch 0,5 s Ein- und Ausblenden); Änderungen gelten nur hier,
    die Standardwerte bleiben unverändert.
-3. **Datei** – die ganze Datei (kein Schnitt). Titel, Prediger/in, Album, Jahr, Kommentar und Cover werden aus der Datei
-   übernommen und können geändert werden; hat der Admin ein Cover eingestellt, kann es das bisherige ersetzen. Hat eine Datei
-   vom Rechner keine Tags, kommen sie von der gleichnamigen veröffentlichten Datei. Die Berechnung startet sofort im Hintergrund
+3. **Datei** – die ganze Datei (kein Schnitt). Titel, Prediger/in, Album, Nr. in der Reihe, Jahr, Kommentar und Cover werden aus
+   der Datei übernommen und können geändert werden; Dateien ohne Cover bekommen das eAg-Cover (bzw. das aus den Einstellungen).
+   Hat eine Datei vom Rechner keine Tags, kommen sie von der gleichnamigen veröffentlichten Datei; fehlt dann noch etwas, aus der
+   eAg-Übersicht (Datum aus dem Dateinamen). Die Berechnung startet sofort im Hintergrund
    (15 min Predigt ≈ 45 s, 26 min ≈ 75 s auf einem 12-Kern-PC, mit Entrauschen). *MP3 erstellen*, vorher/nachher anhören, dann
    veröffentlichen oder herunterladen.
 
@@ -281,9 +314,13 @@ geht für Programme nicht; ein App-Token ist ein Passwort nur für diesen Zweck)
 2. **WebDAV-Adresse des Ordners:** In den Konto-Einstellungen *WebDAV-Informationen in der Detailansicht anzeigen* einschalten. Dann
    den Ordner auswählen (bei einem freigegebenen Ordner unter *Mit mir geteilt*), die Details (ⓘ) öffnen und unter *WebDAV* die
    Adresse kopieren (`https://…/dav/spaces/…`).
-3. **In `config.json` eintragen:** `"cloud": { "url": "<WebDAV-Adresse>", "user": "<OpenCloud-Benutzername>", "token": "<App-Token>" }`.
+3. **In `config.json` eintragen:** `"cloud": { "url": "<WebDAV-Adresse>", "user": "<OpenCloud-Benutzername>", "token": "<App-Token>" }`,
+   dazu die WebDAV-Adressen der beiden Tabellen als `"plan"` (Musik_Mischer_Beamer.xlsx) und `"overview"` (eAg_Übersicht.xlsx) –
+   zu finden wie beim Ordner, oder die Ordner-Adresse plus Pfad (`…/Musik/Musik_Mischer_Beamer.xlsx`). Der Benutzer muss die
+   Einsatzplan-Tabelle bearbeiten dürfen.
 4. **Prüfen**, am besten vor dem Neu-Deployen: `npm run cloud-check -- pfad/zur/config.json --write` (im Container:
-   `node dist-server/cloud-check.mjs --write`). Das listet den Ordner und lädt eine kleine Testdatei hoch und wieder weg.
+   `node dist-server/cloud-check.mjs --write`). Das listet den Ordner, lädt eine kleine Testdatei hoch und wieder weg und prüft,
+   ob die beiden Tabellen erreichbar sind (sie werden dabei nicht verändert).
    Meldet es „Anmeldung abgelehnt (401)“, statt des Benutzernamens die Benutzer-ID (UUID) versuchen – bei Konten, die
    OpenCloud beim ersten Anmelden über ChurchTools selbst anlegt, verlangt OpenCloud sie. Der Server prüft den Zugang auch bei
    jedem Start und schreibt das Ergebnis ins Protokoll („OpenCloud erreichbar …“ oder den Fehler).
@@ -311,7 +348,7 @@ falls gerade keine echte zur Hand ist.
 ```
 index.html, src/home.ts      Startseite: Einsatzplan und Kacheln aus apps.json
 packages/plan/               Einsatzplan aus der Excel-Tabelle der Gemeinde lesen
-apps/predigt-schnitt/        Predigt-Schnitt (Schritte unter src/steps/)
+apps/predigt-schnitt/        Predigt-Schnitt (Schritte unter src/steps/, src/overview.ts: eAg-Übersicht, src/cover/: Standard-Cover)
 apps/predigt-nachbearbeiten/ Predigt nachbearbeiten (nur Admin; nutzt die Bausteine von Predigt-Schnitt)
 apps/termine/                Termine (src/model.ts: Datenmodell, src/xlsx.ts: Excel-Tabelle, src/api.ts: Zugriff auf den Server)
 packages/audio-core/         Decoder, Frame-Index, Merkmale, Erkennung, Lautheit, DSP, Pipeline, Worker
@@ -322,9 +359,10 @@ packages/settings/           localStorage-Store mit JSON-Export/-Import, gemeins
 packages/auth/               Anmeldung am Server (Rollen admin / mischer)
 packages/ui-kit/             DOM-Helfer, Styles
 server/                      Server: api.ts (Anmeldung, Termine, Einsatzplan, Einstellungen, Upload), sermon-store.ts (OpenCloud per WebDAV),
-                             cloud-check.ts, static.ts, main.ts, config.ts, auth.ts
+                             cloud-file.ts (einzelne Dateien in OpenCloud, mit Versionsprüfung), xlsx.ts (Zellen lesen, eine Zelle ändern),
+                             plan-store.ts, overview-store.ts, cloud-check.ts, static.ts, main.ts, config.ts, auth.ts
 Dockerfile, docker-compose.yml, config.example.json   Betrieb auf dem NAS
-scripts/                     bench.ts (Erkennungs-Benchmark), make-synthetic.py, cloud-testserver.sh (OpenCloud zum Testen)
+scripts/                     bench.ts (Erkennungs-Benchmark), make-synthetic.py, cloud-testserver.sh (OpenCloud zum Testen), make-cover.sh
 dev-server.ts                bindet die API in `npm run dev` / `preview` ein
 ```
 

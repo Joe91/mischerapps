@@ -1,6 +1,7 @@
 import { createStore } from '../../../packages/settings/store';
 import type { EncodeOptions } from '../../../packages/audio-core/pipeline';
 import { DENOISE_ATTEN_DB } from '../../../packages/denoise/denoise';
+import DEFAULT_COVER from './cover/eag-cover.jpg';
 
 export const LOUDNESS_PRESETS = {
   mono19: { label: 'Podcast Mono (Standard) – −19 LUFS, −1,5 dBTP', lufs: -19, tp: -1.5 },
@@ -105,6 +106,9 @@ export function upgradeStored(stored: unknown): unknown {
   if (rev < 5 && values.denoiseDb === 12) delete values.denoiseDb;
   return { ...values, rev: SETTINGS_REV };
 }
+
+/** The cover of the MP3s: the admin's own picture, otherwise the eAg logo (cover/, made by scripts/make-cover.sh). */
+export const coverUrl = (s: Pick<Settings, 'coverDataUrl'>) => s.coverDataUrl || DEFAULT_COVER;
 
 export const settingsStore = createStore<Settings>('audio-tools.predigt-schnitt.settings.v1', defaultSettings, upgradeStored);
 

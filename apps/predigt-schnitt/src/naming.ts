@@ -4,6 +4,9 @@ export interface Meta {
   date: string; // YYYY-MM-DD
   scripture: string;
   album: string;
+  /** sermon series and number in it, from the eAg-Übersicht ('' / 0 if unknown) */
+  series?: string;
+  track?: number;
 }
 
 const pad = (n: number) => String(n).padStart(2, '0');
@@ -38,6 +41,7 @@ export function shortDate(iso: string): string {
 export function buildFileName(pattern: string, m: Meta): string {
   const values: Record<string, string> = {
     datum: m.date, jjmmdd: shortDate(m.date), titel: m.title, prediger: m.preacher, bibelstelle: m.scripture, gemeinde: m.album,
+    reihe: m.series ?? '', nr: m.track ? String(m.track).padStart(2, '0') : '',
   };
   const name = pattern.replace(/\{(\w+)\}/g, (_, k: string) => slug(values[k.toLowerCase()] ?? ''))
     .replace(/[^A-Za-z0-9._-]+/g, '-')

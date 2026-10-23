@@ -18,8 +18,8 @@ const STEP_LABELS = ['Laden', 'Schnitt', 'Export', 'Upload'];
 function initialState(settings: Settings): AppState {
   return {
     file: null, audioUrl: null, analysis: null, start: 0, end: 0,
-    meta: { title: settings.titlePrefix, preacher: settings.preacher, date: lastSunday(), scripture: '', album: settings.congregation },
-    fileName: '', fileNameEdited: false,
+    meta: { title: settings.titlePrefix, preacher: settings.preacher, date: lastSunday(), scripture: '', album: settings.congregation, series: '', track: 0 },
+    fileName: '', fileNameEdited: false, metaEdited: new Set(),
     advanced: false, overrides: {},
     measurement: null, measurementKey: '', denoised: null, prepared: null, rendered: null, uploadedAs: null,
   };

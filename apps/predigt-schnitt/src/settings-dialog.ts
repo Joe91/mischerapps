@@ -2,7 +2,7 @@ import { DENOISE_ATTEN_DB } from '../../../packages/denoise/denoise';
 import { h, download, toast } from '../../../packages/ui-kit/dom';
 import type { Ctx } from './context';
 import {
-  EXPORT_PRESETS, LOUDNESS_PRESETS, SOUND_OPTIONS, normalizeSettings, settingsStore,
+  EXPORT_PRESETS, LOUDNESS_PRESETS, SOUND_OPTIONS, coverUrl, normalizeSettings, settingsStore,
   type ExportPresetId, type LoudnessPresetId, type Settings, type SoundOption,
 } from './settings';
 
@@ -38,7 +38,8 @@ export function openSettings(ctx: Ctx, onSaved?: () => void) {
   // ---- cover image ----
   const coverPreview = h('img', { class: 'cover-preview', alt: '' });
   const coverInput = h('input', { type: 'file', accept: 'image/jpeg,image/png' });
-  const showCover = () => { coverPreview.src = draft.coverDataUrl; coverPreview.classList.toggle('hidden', !draft.coverDataUrl); };
+  const coverNote = h('span', { class: 'muted small' });
+  const showCover = () => { coverPreview.src = coverUrl(draft); coverNote.textContent = draft.coverDataUrl ? 'eigenes Bild' : 'Standard: eAg-Logo'; };
   coverInput.addEventListener('change', () => {
     const f = coverInput.files?.[0];
     if (!f) return;
@@ -104,9 +105,9 @@ export function openSettings(ctx: Ctx, onSaved?: () => void) {
         text('Gemeinde (Album)', () => draft.congregation, v => { draft.congregation = v; }),
         text('Prediger/in (Vorgabe)', () => draft.preacher, v => { draft.preacher = v; }),
       ),
-      h('p', { class: 'muted small' }, 'Platzhalter: {jjmmdd} (JJMMTT, z. B. 260712) {datum} (JJJJ-MM-TT) {titel} {prediger} {bibelstelle} {gemeinde}. Umlaute werden ersetzt (ä → ae).'),
-      h('div', { class: 'row' }, h('label', null, 'Cover-Bild (optional, JPEG/PNG < 500 kB)', coverInput), coverPreview,
-        h('button', { class: 'btn btn-sm btn-ghost', type: 'button', onclick: () => { draft.coverDataUrl = ''; coverInput.value = ''; showCover(); } }, 'Entfernen')),
+      h('p', { class: 'muted small' }, 'Platzhalter: {jjmmdd} (JJMMTT, z. B. 260712) {datum} (JJJJ-MM-TT) {titel} {prediger} {bibelstelle} {gemeinde} {reihe} (Predigtreihe) {nr} (Nummer in der Reihe, z. B. 04). Umlaute werden ersetzt (ä → ae).'),
+      h('div', { class: 'row' }, h('label', null, 'Cover-Bild (eigenes: JPEG/PNG < 500 kB)', coverInput), coverPreview, coverNote,
+        h('button', { class: 'btn btn-sm btn-ghost', type: 'button', onclick: () => { draft.coverDataUrl = ''; coverInput.value = ''; showCover(); } }, 'Standard')),
     ),
     h('fieldset', null, h('legend', null, 'Erkennung'),
       h('div', { class: 'adv-groups' },

@@ -22,8 +22,12 @@ export interface ServerConfig {
   cloud: CloudConfig | null;
 }
 
-/** WebDAV access to the shared folder: its WebDAV URL and an app token of a user who may edit it. */
-export interface CloudConfig { url: string; user: string; token: string; }
+/**
+ * WebDAV access to the shared folder: its WebDAV URL and an app token of a user who may edit it. Optional, with the
+ * same token: the WebDAV URLs of the Einsatzplan (Musik_Mischer_Beamer.xlsx, read and written) and of the
+ * eAg-Übersicht (eAg_Übersicht.xlsx, read for the tags).
+ */
+export interface CloudConfig { url: string; user: string; token: string; plan?: string; overview?: string; }
 
 export class ConfigError extends Error {}
 
@@ -63,6 +67,14 @@ export function parseConfig(raw: unknown, env: NodeJS.ProcessEnv = process.env):
     if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new ConfigError('config: cloud.url muss mit https:// beginnen.');
     // the folder's WebDAV URL as OpenCloud shows it; a trailing slash makes file URLs relative to it
     cloud = { url: url.href.replace(/\/?$/, '/'), user: String(c.user).trim(), token: String(c.token) };
+    for (const k of ['plan', 'overview'] as const) {
+      if (c[k] === undefined) continue;
+      if (String(c[k]).startsWith('CHANGE-ME')) throw new ConfigError(`config: cloud.${k} ist noch der Platzhalter (eintragen oder die Zeile löschen).`);
+      let file: URL;
+      try { file = new URL(String(c[k]).trim()); } catch { throw new ConfigError(`config: cloud.${k} ist keine gültige Adresse.`); }
+      if (file.protocol !== 'https:' && file.protocol !== 'http:') throw new ConfigError(`config: cloud.${k} muss mit https:// beginnen.`);
+      cloud[k] = file.href;
+    }
   }
   return {
     users,

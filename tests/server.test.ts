@@ -206,7 +206,7 @@ describe('einsatzplan', () => {
 
   it('is empty until the admin imports a spreadsheet (only the admin may)', async () => {
     const m = (await login('mischer', 'mischer-password')).cookie, a = (await login('admin', 'admin-password')).cookie;
-    expect(await plan()).toEqual({ entries: [], names: {}, updated: null, public: true });
+    expect(await plan()).toEqual({ entries: [], names: {}, updated: null, public: true, source: 'NAS', syncError: null });
     expect((await fetch(`${base}/api/plan/import`, { method: 'POST', body: await sheet() })).status).toBe(401);
     expect((await fetch(`${base}/api/plan/import`, { method: 'POST', headers: { Cookie: m }, body: await sheet() })).status).toBe(403);
     expect((await fetch(`${base}/api/plan/import`, { method: 'POST', headers: { Cookie: a }, body: 'garbage' })).status).toBe(400);
@@ -402,5 +402,10 @@ describe('auth helpers and config', () => {
     expect(() => parseConfig({ ...ok, cloud: example.cloud }, {})).toThrow(/cloud.url ist noch der Platzhalter/);
     expect(() => parseConfig({ ...ok, cloud: { ...cloud, token: '' } }, {})).toThrow(/cloud.token fehlt/);
     expect(() => parseConfig({ ...ok, cloud: { ...cloud, url: 'ftp://x/' } }, {})).toThrow(/https/);
+    const files = { plan: 'https://cloud.example.org/dav/spaces/a$b/Musik/Plan.xlsx', overview: 'https://cloud.example.org/dav/spaces/a$b/Allgemein/eAg_Übersicht.xlsx' };
+    expect(parseConfig({ ...ok, cloud: { ...cloud, ...files } }, {}).cloud).toMatchObject({
+      plan: files.plan, overview: 'https://cloud.example.org/dav/spaces/a$b/Allgemein/eAg_%C3%9Cbersicht.xlsx',
+    });
+    expect(() => parseConfig({ ...ok, cloud: { ...cloud, plan: example.cloud.plan } }, {})).toThrow(/cloud.plan ist noch der Platzhalter/);
   });
 });

@@ -32,6 +32,10 @@ export interface PlanResponse extends Plan {
   updated: string | null;
   /** not logged in: only the next few dates, without names and remarks */
   public: boolean;
+  /** "OpenCloud": read from (and Mischer written to) the spreadsheet there; "NAS": imported by the admin */
+  source: 'OpenCloud' | 'NAS';
+  /** logged in only: why OpenCloud could not be read just now (the last copy is shown) */
+  syncError: string | null;
 }
 
 export class PlanFormatError extends Error {}

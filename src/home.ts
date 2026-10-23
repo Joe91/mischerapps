@@ -45,14 +45,87 @@ function relativeDay(iso: string): string {
   return days === 0 ? 'heute' : days === 1 ? 'morgen' : days < 14 ? `in ${days} Tagen` : '';
 }
 
-function person(label: string, value: string, main = false) {
+function person(label: string, value: string, main = false, edit?: HTMLElement) {
   const open = isOpen(value);
   const name = fullNames(value);
   return h('div', { class: `role${main ? ' role-main' : ''}${open ? ' open' : ''}` },
-    h('span', { class: 'role-label' }, label),
+    h('span', { class: 'role-label' }, label, edit ?? ''),
     h('span', { class: 'role-name' }, open ? value || 'offen' : name),
     !open && name !== value ? h('span', { class: 'role-code' }, value) : '',
   );
+}
+
+// ---- admin: who mixes on a date (written into the Einsatzplan, in OpenCloud only that cell) ----
+
+const ASSIGN_ERRORS: Record<number, string> = {
+  404: 'Dieses Datum steht nicht (mehr) in der Tabelle.',
+  409: 'Die Tabelle wurde gerade von jemand anderem geändert. Bitte noch einmal versuchen.',
+  423: 'Die Tabelle ist gerade in OpenCloud zum Bearbeiten geöffnet. Bitte später noch einmal versuchen.',
+  500: 'Die Tabelle kann nicht gelesen werden (beschädigt, oder die Zelle enthält eine Formel).',
+  502: 'OpenCloud ist gerade nicht erreichbar, oder das App-Token ist abgelaufen.',
+};
+
+const editButton = (e: PlanEntry) => isAdmin()
+  ? h('button', { class: 'btn btn-ghost btn-sm edit-mischer', type: 'button', title: 'Mischer eintragen', 'aria-label': `Mischer am ${e.date} eintragen`, onclick: () => assignMischer(e) }, '✎')
+  : undefined;
+
+/** Kürzel known from the key below the plan and from earlier assignments, for the suggestions. */
+function knownMischer(): string[] {
+  const codes = new Set(Object.keys(plan?.names ?? {}));
+  for (const e of plan?.entries ?? []) for (const c of e.mischer.split(/[,/ ]+/)) if (/^[A-ZÄÖÜ]{1,6}$/.test(c)) codes.add(c);
+  return [...codes].sort();
+}
+
+function assignMischer(e: PlanEntry) {
+  const list = h('datalist', { id: 'mischer-codes' }, knownMischer().map(c => h('option', { value: c }, plan?.names[c] ?? '')));
+  const input = h('input', { value: isOpen(e.mischer) ? '' : e.mischer, list: 'mischer-codes', maxlength: 60, autocomplete: 'off', placeholder: 'Kürzel, z. B. JD' });
+  const hint = h('p', { class: 'muted small' });
+  const status = h('p', { class: 'login-error', role: 'alert' });
+  const showHint = () => { hint.textContent = input.value.trim() ? fullNames(input.value.trim()) : 'Leer lassen = niemand eingeteilt'; };
+  input.addEventListener('input', showHint);
+  showHint();
+  const save = h('button', { class: 'btn btn-primary', type: 'submit' }, 'Speichern');
+  const dlg = h('dialog', { class: 'assign' },
+    h('form', {
+      onsubmit: async (ev: Event) => {
+        ev.preventDefault();
+        save.disabled = true;
+        status.textContent = '';
+        try {
+          let res: Response;
+          try {
+            res = await fetch('/api/plan/mischer', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ date: e.date, mischer: input.value.trim() }),
+            });
+          } catch { throw new Error('Server nicht erreichbar.'); }
+          if (!res.ok) throw new Error(ASSIGN_ERRORS[res.status] ?? `Speichern fehlgeschlagen (${res.status}).`);
+          dlg.close();
+          toast(plan?.source === 'OpenCloud' ? 'In der Tabelle in OpenCloud eingetragen.' : 'Eingetragen.', 'ok');
+          await loadPlan();
+        } catch (err) {
+          status.textContent = (err as Error).message;
+        } finally {
+          save.disabled = false;
+        }
+      },
+    },
+      h('div', { class: 'dlg-head' }, h('h2', null, 'Mischer eintragen')),
+      h('div', { class: 'dlg-body' },
+        h('p', null, parseIso(e.date).toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }),
+          e.team ? h('span', { class: 'muted' }, ` · ${team(e)}`) : ''),
+        h('label', null, 'Mischer', input), list, hint, status,
+        h('p', { class: 'muted small' }, plan?.source === 'OpenCloud'
+          ? 'Wird in die Tabelle Musik_Mischer_Beamer.xlsx in OpenCloud geschrieben – nur diese eine Zelle.'
+          : 'Wird in die Tabelle auf dem NAS geschrieben.'),
+        h('div', { class: 'actions' },
+          h('button', { class: 'btn', type: 'button', onclick: () => dlg.close() }, 'Abbrechen'), save),
+      ),
+    ),
+  );
+  dlg.addEventListener('close', () => dlg.remove());
+  document.body.append(dlg);
+  dlg.showModal();
+  input.focus();
 }
 
 function nextCard(e: PlanEntry, first: boolean) {
@@ -61,7 +134,7 @@ function nextCard(e: PlanEntry, first: boolean) {
     h('div', { class: 'plan-when' },
       h('span', { class: 'plan-date' }, parseIso(e.date).toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' })),
       rel ? h('span', { class: 'plan-rel' }, rel) : ''),
-    person('Mischer', e.mischer, true),
+    person('Mischer', e.mischer, true, editButton(e)),
     h('div', { class: 'plan-roles' },
       person('Beamer', e.beamer),
       h('div', { class: 'role' }, h('span', { class: 'role-label' }, 'Musik'), h('span', { class: 'role-name' }, team(e) || '–')),
@@ -75,10 +148,25 @@ function planList(entries: PlanEntry[], past = false) {
     h('li', { class: 'plan-row plan-list-head', 'aria-hidden': 'true' }, h('span', null, 'Datum'), h('span', null, 'Mischer'), h('span', null, 'Beamer · Musik')),
     entries.map(e => h('li', { class: 'plan-row' },
       h('span', { class: 'plan-row-date' }, parseIso(e.date).toLocaleDateString('de-DE', { weekday: 'short', day: '2-digit', month: '2-digit', year: '2-digit' })),
-      h('span', { class: `plan-row-mischer${isOpen(e.mischer) ? ' open' : ''}` }, isOpen(e.mischer) ? e.mischer || 'offen' : fullNames(e.mischer)),
+      h('span', { class: `plan-row-mischer${isOpen(e.mischer) ? ' open' : ''}` }, isOpen(e.mischer) ? e.mischer || 'offen' : fullNames(e.mischer),
+        past ? '' : editButton(e) ?? ''),
       h('span', { class: 'plan-row-rest' }, [`Beamer ${fullNames(e.beamer) || '–'}`, team(e), e.special, e.note].filter(Boolean).join(' · ')),
     )),
   );
+}
+
+/** Admin, with the plan in OpenCloud: look for changes now instead of in a few minutes. */
+function refreshButton() {
+  return h('button', {
+    class: 'btn btn-sm', type: 'button', title: 'Die Tabelle in OpenCloud wird sonst alle paar Minuten neu gelesen.',
+    onclick: async (ev: Event) => {
+      const b = ev.currentTarget as HTMLButtonElement;
+      b.disabled = true;
+      try { await fetch('/api/plan/refresh', { method: 'POST' }); } catch { /* shown by loadPlan */ }
+      await loadPlan();
+      b.disabled = false;
+    },
+  }, '↻ Aus OpenCloud aktualisieren');
 }
 
 /** Admin: uploads the church's spreadsheet (e.g. Musik_Mischer_Beamer.xlsx); it replaces the previous plan. */
@@ -125,12 +213,16 @@ function renderPlan() {
   planBox.replaceChildren(...[
     h('div', { class: 'plan-head' },
       h('h2', null, 'Einsatzplan'),
-      plan.updated && !plan.public ? h('span', { class: 'muted small' }, `Stand ${new Date(plan.updated).toLocaleDateString('de-DE')}`) : '',
+      plan.updated && !plan.public ? h('span', { class: 'muted small' },
+        `Stand ${new Date(plan.updated).toLocaleDateString('de-DE')}${plan.source === 'OpenCloud' ? ' · aus OpenCloud' : ''}`) : '',
       h('span', { class: 'spacer' }),
-      admin ? importButton() : '',
+      admin ? (plan.source === 'OpenCloud' ? refreshButton() : importButton()) : '',
     ),
     planError ? h('p', { class: 'notice error' }, planError) : '',
-    !plan.updated ? h('p', { class: 'muted' }, 'Noch kein Einsatzplan. Die Excel-Tabelle mit Datum, Musikteam, Teamleitung, Mischer und Beamer hier importieren.')
+    plan.syncError ? h('p', { class: 'notice warn' }, `Die Tabelle in OpenCloud kann gerade nicht gelesen werden (${plan.syncError}). ` +
+      'Angezeigt wird der zuletzt gelesene Stand.') : '',
+    !plan.updated ? h('p', { class: 'muted' }, plan.source === 'OpenCloud' ? 'Der Einsatzplan aus OpenCloud konnte noch nicht gelesen werden.'
+      : 'Noch kein Einsatzplan. Die Excel-Tabelle mit Datum, Musikteam, Teamleitung, Mischer und Beamer hier importieren.')
       : !upcoming.length ? h('p', { class: 'muted' }, 'Keine kommenden Termine im Einsatzplan.') : '',
     upcoming.length ? h('div', { class: 'plan-next' }, upcoming.slice(0, 2).map((e, i) => nextCard(e, i === 0))) : '',
     plan.public

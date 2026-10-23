@@ -6,6 +6,8 @@
   "cloud": {
     "url": "CHANGE-ME: WebDAV-Adresse des Ordners in OpenCloud, https://…/dav/spaces/…/",
     "user": "CHANGE-ME: OpenCloud-Benutzername",
-    "token": "CHANGE-ME: App-Token"
+    "token": "CHANGE-ME: App-Token",
+    "plan": "CHANGE-ME: WebDAV-Adresse von Musik_Mischer_Beamer.xlsx (oder Zeile löschen)",
+    "overview": "CHANGE-ME: WebDAV-Adresse von eAg_Übersicht.xlsx (oder Zeile löschen)"
   }
 }

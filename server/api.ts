@@ -11,7 +11,9 @@ import { publicPlan, type PlanResponse } from '../packages/plan/plan';
 import { XLSX_MIME } from '../apps/termine/src/xlsx';
 import { LoginLimiter, signSession, verifyPassword, verifySession } from './auth';
 import { ROLES, type Role, type ServerConfig } from './config';
-import { PlanFormatError, PlanStore } from './plan-store';
+import { PlanDateMissing, PlanFormatError, PlanReadOnly, PlanStore } from './plan-store';
+import { OverviewStore } from './overview-store';
+import { CloudFile } from './cloud-file';
 import { DamagedSettings, SharedSettings } from './shared-settings';
 import { InvalidSpreadsheet, TermineStore } from './termine-store';
 import { createStore, StoreError, type SermonStore } from './sermon-store';
@@ -73,7 +75,9 @@ export function createApi(cfg: ServerConfig, store: SermonStore = createStore(cf
   const secret = secretFor(cfg);
   const termine = new TermineStore(cfg.dataDir);
   const shared = new SharedSettings(cfg.dataDir);
-  const plan = new PlanStore(cfg.dataDir);
+  const cloudFile = (url?: string) => (cfg.cloud && url ? new CloudFile(url, cfg.cloud) : null);
+  const plan = new PlanStore(cfg.dataDir, cloudFile(cfg.cloud?.plan));
+  const overview = new OverviewStore(cloudFile(cfg.cloud?.overview));
   const limiter = new LoginLimiter();
   const maxUpload = cfg.maxUploadMb * 1024 * 1024;
   const originals = join(cfg.dataDir, ORIGINALS);
@@ -242,7 +246,9 @@ export function createApi(cfg: ServerConfig, store: SermonStore = createStore(cf
     if (path === '/api/plan' && method === 'GET') {
       const stored = await plan.read();
       const value = stored ? (role ? stored.plan : publicPlan(stored.plan, isoDate(new Date()))) : { entries: [], names: {} };
-      return sendJson(res, 200, { ...value, updated: stored?.updated ?? null, public: !role } satisfies PlanResponse);
+      return sendJson(res, 200, {
+        ...value, updated: stored?.updated ?? null, public: !role, source: plan.source, syncError: role ? stored?.syncError ?? null : null,
+      } satisfies PlanResponse);
     }
     if (!role) throw new HttpError(401, 'unauthorized');
     const admin = () => { if (role !== 'admin') throw new HttpError(403, 'forbidden'); };
@@ -288,10 +294,35 @@ export function createApi(cfg: ServerConfig, store: SermonStore = createStore(cf
       let result;
       try { result = await plan.importXlsx(await readBody(req, 10 * 1024 * 1024)); } catch (e) {
         if (e instanceof PlanFormatError) throw new HttpError(400, e.message);
+        if (e instanceof PlanReadOnly) throw new HttpError(409, 'plan comes from OpenCloud');
         throw e;
       }
       log(`plan imported: ${result.dates} dates, ${result.hidden} without service hidden`);
       return sendJson(res, 200, result);
+    }
+    if (path === '/api/plan/refresh' && post) {
+      admin();
+      await plan.sync(true);
+      return send(res, 204);
+    }
+    // the admin enters who mixes on a date; written into the Einsatzplan (in OpenCloud: only that cell)
+    if (path === '/api/plan/mischer' && post) {
+      admin();
+      const { date, mischer } = (await readJson(req, 4096) ?? {}) as { date?: unknown; mischer?: unknown };
+      if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new HttpError(400, 'bad date');
+      if (typeof mischer !== 'string' || mischer.length > 60 || /[\r\n]/.test(mischer)) throw new HttpError(400, 'bad mischer');
+      await plan.assign(date, mischer.trim());
+      log(`plan: Mischer ${date} = "${mischer.trim()}"`);
+      return send(res, 204);
+    }
+    // what the eAg-Übersicht says about a date: series, its number in the series, preacher (for the tags)
+    if (path === '/api/overview' && method === 'GET') {
+      const date = new URL(req.url ?? '', 'http://x').searchParams.get('date') ?? '';
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new HttpError(400, 'bad date');
+      if (!overview.configured) throw new HttpError(404, 'no overview');
+      const entry = await overview.find(date);
+      if (!entry) throw new HttpError(404, 'date not in overview');
+      return sendJson(res, 200, entry);
     }
 
     const settingsMatch = /^\/api\/settings\/([a-z]+)$/.exec(path);
@@ -343,6 +374,7 @@ export function createApi(cfg: ServerConfig, store: SermonStore = createStore(cf
         sendText(res, e.status, e.message);
       }
       else if (e instanceof OpError) sendText(res, 400, e.message);
+      else if (e instanceof PlanDateMissing) sendText(res, 404, 'date not in plan');
       else if (e instanceof PlanFormatError) { console.error(`einsatzplan.xlsx: ${e.message}`); sendText(res, 500, 'einsatzplan.xlsx is damaged'); }
       else if (e instanceof DamagedSettings) { console.error(e.message); sendText(res, 500, 'settings.json is damaged'); }
       else { console.error(e); sendText(res, 500, 'server error'); }

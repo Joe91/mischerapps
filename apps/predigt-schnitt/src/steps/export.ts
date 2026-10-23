@@ -1,8 +1,9 @@
 import { h, fmtTime, fmtNum, fmtBytes, download } from '../../../../packages/ui-kit/dom';
 import { tagMp3, type Tags } from '../../../../packages/audio-core/tags';
 import { choices, processOptions, STEP, type Ctx, type Step } from '../context';
-import { EXPORT_PRESETS, LOUDNESS_PRESETS } from '../settings';
+import { EXPORT_PRESETS, LOUDNESS_PRESETS, coverUrl } from '../settings';
 import { buildFileName, sanitizeFileName } from '../naming';
+import { fetchOverview, seriesTitle } from '../overview';
 import { createAdvancedPanel, createPrepareView } from './prepare';
 
 async function coverFromDataUrl(dataUrl: string): Promise<Tags['cover']> {
@@ -17,16 +18,45 @@ export function createExportStep(ctx: Ctx): Step {
   const result = h('div');
   let running = false;
 
-  const field = (label: string, key: keyof typeof st.meta, attrs: Record<string, unknown> = {}) => {
+  type TextKey = 'title' | 'preacher' | 'date' | 'scripture' | 'album';
+  const field = (label: string, key: TextKey, attrs: Record<string, unknown> = {}) => {
     const input = h('input', { ...attrs, value: st.meta[key] });
-    input.addEventListener('input', () => { st.meta[key] = input.value; updateName(); markStale(); });
+    input.addEventListener('input', () => {
+      st.meta[key] = input.value;
+      if (key === 'date') void fromOverview(); else st.metaEdited.add(key);
+      updateName(); markStale();
+    });
     return { label: h('label', null, label, input), input };
   };
   const title = field('Titel', 'title', { placeholder: 'z. B. Predigt über Lukas 18' });
   const preacher = field('Prediger/in', 'preacher');
   const date = field('Datum', 'date', { type: 'date' });
   const scripture = field('Bibelstelle', 'scripture', { placeholder: 'z. B. Lk 18,1-8' });
-  const album = field('Gemeinde (Album)', 'album');
+  const album = field('Album (Predigtreihe)', 'album');
+  const overviewHint = h('p', { class: 'muted small overview-hint' });
+
+  /**
+   * Series, its number and preacher for the date from the eAg-Übersicht: fills title ("Zeit - 04"), album and
+   * preacher, unless typed in by hand. A date without entry brings back the defaults.
+   */
+  let lookups = 0;
+  async function fromOverview() {
+    const n = ++lookups, day = st.meta.date;
+    const o = await fetchOverview(day);
+    if (n !== lookups || day !== st.meta.date) return;
+    if (o === 'unavailable') { overviewHint.textContent = ''; return; }
+    const set = (key: Exclude<TextKey, 'date'>, value: string) => { if (!st.metaEdited.has(key)) st.meta[key] = value; };
+    st.meta.series = o?.series ?? '';
+    st.meta.track = o?.series ? o.index : 0;
+    set('title', o?.series ? seriesTitle(o) : s.titlePrefix);
+    set('album', o?.series || s.congregation);
+    set('preacher', o?.preacher || s.preacher);
+    overviewHint.textContent = !o ? 'Für dieses Datum steht nichts in der eAg-Übersicht.'
+      : 'Aus der eAg-Übersicht: ' + [o.series ? `Reihe „${o.series}“, ${o.index}. Predigt` : 'keine Predigtreihe', o.preacher && `Prediger/in ${o.preacher}`].filter(Boolean).join(' · ');
+    title.input.value = st.meta.title; album.input.value = st.meta.album; preacher.input.value = st.meta.preacher;
+    updateName();
+    markStale();
+  }
 
   const nameInput = h('input', { class: 'mono', spellcheck: 'false' });
   nameInput.addEventListener('input', () => { st.fileNameEdited = true; st.fileName = nameInput.value; });
@@ -85,8 +115,9 @@ export function createExportStep(ctx: Ctx): Step {
     album: st.meta.album.trim() || undefined,
     year: Number(st.meta.date.slice(0, 4)) || undefined,
     comment: [st.meta.scripture.trim(), st.meta.date].filter(Boolean).join(' · ') || undefined,
+    track: st.meta.track || undefined,
   });
-  const renderKey = () => JSON.stringify({ o: processOptions(ctx), p: choices(ctx).exportPreset, t: tags(), c: s.coverDataUrl.length });
+  const renderKey = () => JSON.stringify({ o: processOptions(ctx), p: choices(ctx).exportPreset, t: tags(), c: coverUrl(s).length });
 
   function markStale() {
     if (st.rendered && st.rendered.key !== renderKey()) {
@@ -104,7 +135,7 @@ export function createExportStep(ctx: Ctx): Step {
     try {
       const key = renderKey(), t = tags();
       const p = await prepare.run();
-      const mp3 = tagMp3(p.mp3, { ...t, cover: await coverFromDataUrl(s.coverDataUrl) });
+      const mp3 = tagMp3(p.mp3, { ...t, cover: await coverFromDataUrl(coverUrl(s)) });
       if (st.rendered) URL.revokeObjectURL(st.rendered.url);
       const blob = new Blob([mp3 as Uint8Array<ArrayBuffer>], { type: 'audio/mpeg' });
       st.rendered = { blob, url: URL.createObjectURL(blob), stats: p.stats, key };
@@ -148,6 +179,7 @@ export function createExportStep(ctx: Ctx): Step {
   const el = h('section', { class: 'card' },
     h('div', { class: 'card-head' }, h('h2', null, '3 · Export')),
     h('div', { class: 'grid' }, title.label, preacher.label, date.label, scripture.label, album.label),
+    overviewHint,
     h('label', { class: 'file-name' }, 'Dateiname', h('div', { class: 'row nowrap' }, nameInput, resetName)),
     h('div', { class: 'row options' }, summary, h('span', { class: 'spacer' }), advancedBtn),
     advanced.el,
@@ -166,6 +198,7 @@ export function createExportStep(ctx: Ctx): Step {
       scripture.input.value = st.meta.scripture; album.input.value = st.meta.album;
       updateName();
       showAdvanced();
+      void fromOverview();
       prepare.start(); // loudness and MP3 are worked out while the details are filled in
       if (!st.rendered) { result.replaceChildren(); status.replaceChildren(); }
       else showResult();

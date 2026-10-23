@@ -1,11 +1,13 @@
 // Checks the OpenCloud access in the config file before (or after) deploying:
 //   npm run cloud-check -- pfad/zur/config.json     (im Container: node dist-server/cloud-check.mjs)
 // Lists the target folder with the app token and, with --write, also uploads and deletes a small test file.
+// Einsatzplan and eAg-Übersicht (cloud.plan / cloud.overview) are only looked at, never changed.
 import { writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ConfigError, loadConfig } from './config';
 import { describeStoreError, WebDavStore } from './sermon-store';
+import { CloudFile } from './cloud-file';
 
 const args = process.argv.slice(2);
 const file = args.find(a => !a.startsWith('--')) ?? process.env.CONFIG_FILE ?? '/config/config.json';
@@ -36,3 +38,16 @@ try {
   console.error(`✗ ${describeStoreError(e)}`);
   process.exit(1);
 }
+let failed = false;
+for (const [key, label] of [['plan', 'Einsatzplan'], ['overview', 'eAg-Übersicht']] as const) {
+  const url = cfg.cloud[key];
+  if (!url) { console.log(`– ${label}: nicht eingetragen (cloud.${key})`); continue; }
+  try {
+    const { modified } = await new CloudFile(url, cfg.cloud).stat();
+    console.log(`✓ ${label} erreichbar, zuletzt geändert ${new Date(modified).toLocaleString('de-DE')}`);
+  } catch (e) {
+    console.error(`✗ ${label}: ${describeStoreError(e)}`);
+    failed = true;
+  }
+}
+if (failed) process.exit(1);
