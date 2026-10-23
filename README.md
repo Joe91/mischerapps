@@ -228,7 +228,8 @@ Für Predigten, die schon veröffentlicht sind, z. B. ältere Aufnahmen von vor 
 Die Kachel sieht nur der Admin; der Server lässt nur ihn zu.
 
 1. **Predigten wählen** – zwei Quellen:
-   - *Auf dem NAS:* Liste aller Dateien in `data/predigten/` (Suche nach Namensteil, z. B. `2606`), *Bearbeiten* lädt eine davon.
+   - *Auf dem NAS:* Liste aller Dateien in `data/predigten/` (Suche nach Namensteil, z. B. `2606`), *Bearbeiten* lädt eine davon,
+     *⬇* lädt sie herunter (bei nachbearbeiteten auch *⬇ erste Fassung*, als `…-original.mp3`).
    - *Vom Rechner:* MP3-Dateien hineinziehen oder auswählen, auch mehrere auf einmal. Jede einzeln *Bearbeiten* oder
      **Alle nacheinander bearbeiten und hochladen**: Die Dateien laufen dann ohne weiteres Zutun mit den Einstellungen aus
      Schritt 2 durch und landen auf dem NAS (Status je Datei in der Liste, *Nach dieser Datei anhalten* möglich).

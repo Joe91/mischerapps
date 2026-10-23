@@ -124,6 +124,7 @@ if (!isAdmin()) {
   let batch: { stop: boolean; at: number; of: number } | null = null;
 
   const onNas = (name: string) => published.find(f => f.name === name);
+  const fileUrl = (name: string, original = false) => `/api/uploads/${encodeURIComponent(name)}${original ? '?original=1' : ''}`;
 
   // ---- 1 · files: on the NAS ----
 
@@ -158,6 +159,11 @@ if (!isAdmin()) {
           f.original ? h('span', { class: 'badge', title: 'Wurde schon ersetzt; die erste Fassung liegt in predigten/original/.' }, 'nachbearbeitet') : '',
           h('span', { class: 'muted small' }, `${new Date(f.modified).toLocaleDateString('de-DE')} · ${fmtBytes(f.size)}`),
           h('span', { class: 'row-buttons' },
+            f.original ? h('a', {
+              class: 'btn btn-sm btn-ghost', href: fileUrl(f.name, true), download: f.name.replace(/\.mp3$/, '-original.mp3'),
+              title: 'Die zuerst veröffentlichte Fassung herunterladen (vor dem ersten Ersetzen)',
+            }, '⬇ erste Fassung') : '',
+            h('a', { class: 'btn btn-sm btn-ghost', href: fileUrl(f.name), download: f.name, title: 'Herunterladen', 'aria-label': `${f.name} herunterladen` }, '⬇'),
             h('button', { class: 'btn btn-sm', type: 'button', disabled: busy || !!batch, onclick: () => open({ published: f, fromOriginal: f.original }).catch(noop) }, 'Bearbeiten')),
         ))) : '',
     );

@@ -207,7 +207,7 @@ export function createApi(cfg: ServerConfig) {
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Content-Type', 'audio/mpeg');
     res.setHeader('Content-Length', String(s.size));
-    res.setHeader('Content-Disposition', `attachment; filename="${name}"`);
+    res.setHeader('Content-Disposition', `attachment; filename="${original ? name.replace(/\.mp3$/, '-original.mp3') : name}"`);
     await pipeline(createReadStream(file), res);
   }
 

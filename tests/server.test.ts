@@ -320,7 +320,9 @@ describe('upload', () => {
     expect((await put(a, 'ID3 v2')).status).toBe(200);
     expect((await put(a, 'ID3 v3')).status).toBe(200);
     expect(await (await fetch(url, as(a))).text()).toBe('ID3 v3');
-    expect(await (await fetch(`${url}?original=1`, as(a))).text()).toBe('ID3 v1'); // the first version stays
+    const first = await fetch(`${url}?original=1`, as(a));
+    expect(await first.text()).toBe('ID3 v1'); // the first version stays
+    expect(first.headers.get('content-disposition')).toBe('attachment; filename="replace-me-original.mp3"');
     expect((await listed())?.original).toBe(true);
 
     expect((await put(a, 'not an mp3')).status).toBe(415);

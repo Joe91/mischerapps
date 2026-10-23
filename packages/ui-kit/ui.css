@@ -76,6 +76,7 @@ a { color: var(--accent); }
   display: inline-flex; align-items: center; gap: .4rem; white-space: nowrap;
 }
 .btn:hover:not(:disabled) { border-color: var(--accent); }
+a.btn { text-decoration: none; }
 .btn:disabled { opacity: .5; cursor: default; }
 .btn:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .btn-primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); font-weight: 600; }
