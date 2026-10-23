@@ -4,7 +4,7 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AddressInfo } from 'node:net';
-import { parseMultistatus, StoreError, WebDavStore } from '../server/sermon-store';
+import { LocalStore, parseMultistatus, StoreError, WebDavStore, type SermonStore } from '../server/sermon-store';
 import { createApi } from '../server/api';
 import { hashPassword } from '../server/auth';
 
@@ -155,5 +155,55 @@ describe('WebDavStore and the API with OpenCloud', () => {
       expect([again.status, await again.text()]).toEqual([502, 'cloud 401']);
     }
     srv.close();
+  });
+});
+
+describe('slow uploads: answered at once, finished in the background', () => {
+  it('answers 202 with a job when OpenCloud takes long, and the job tells how it ended', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'mischer-slow-'));
+    const local = new LocalStore(join(dir, 'predigten'));
+    let fail: StoreError | null = null;
+    // like OpenCloud over a slow line: writing takes longer than the request may wait
+    const slow: SermonStore = {
+      label: 'OpenCloud', list: () => local.list(), exists: n => local.exists(n), read: n => local.read(n),
+      write: async (name, src, replace) => {
+        await new Promise(r => setTimeout(r, 300));
+        if (fail) { await rm(src, { force: true }); throw fail; }
+        return local.write(name, src, replace);
+      },
+    };
+    const handle = createApi({
+      users: { admin: 'admin-password', mischer: hashPassword('mischer-password') }, dataDir: join(dir, 'data'), staticDir: dir,
+      sessionSecret: 'test-secret-test-secret', sessionDays: 30, maxUploadMb: 1, secureCookies: false, cloud: null,
+    }, slow, { syncWaitMs: 50 });
+    const srv = createServer((req, res) => { void handle(req, res); });
+    await new Promise<void>(r => srv.listen(0, '127.0.0.1', r));
+    const b = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
+    const login = await fetch(`${b}/api/login`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user: 'admin', password: 'admin-password' }) });
+    const cookie = (login.headers.get('set-cookie') ?? '').split(';')[0];
+    const send = (method: string, path: string) => fetch(`${b}${path}`, { method, headers: { Cookie: cookie, 'Content-Type': 'audio/mpeg' }, body: 'ID3 x' });
+    const until = async (id: string) => {
+      for (;;) {
+        const job = await (await fetch(`${b}/api/jobs/${id}`, { headers: { Cookie: cookie } })).json();
+        if (job.state !== 'running') return job;
+        await new Promise(r => setTimeout(r, 50));
+      }
+    };
+
+    const first = await send('POST', '/api/upload?name=a.mp3');
+    expect(first.status).toBe(202);
+    const { job } = await first.json();
+    expect(await until(job)).toEqual({ state: 'done', file: 'a.mp3', status: null, error: null });
+    expect(await local.exists('a.mp3')).toBe(true);
+
+    fail = new StoreError(502, 'cloud 423');
+    const replaced = await send('PUT', '/api/uploads/a.mp3');
+    expect(replaced.status).toBe(202);
+    expect(await until((await replaced.json()).job)).toEqual({ state: 'failed', file: 'a.mp3', status: 502, error: 'cloud 423' });
+    expect((await fetch(`${b}/api/jobs/0123456789abcdef`, { headers: { Cookie: cookie } })).status).toBe(404);
+    expect((await fetch(`${b}/api/jobs/${job}`)).status).toBe(401);
+    expect(await readdir(join(dir, 'data/tmp'))).toEqual([]);
+    srv.close();
+    await rm(dir, { recursive: true, force: true });
   });
 });

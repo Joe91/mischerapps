@@ -70,7 +70,11 @@ const sendText = (res: ServerResponse, status: number, text: string) =>
 const log = (msg: string) => console.log(`${new Date().toISOString()} ${msg}`);
 
 /** Returns a handler for /api/*: resolves to false if the request is not for the API. */
-export function createApi(cfg: ServerConfig, store: SermonStore = createStore(cfg.cloud, cfg.dataDir)) {
+/**
+ * `syncWaitMs`: how long an upload request waits for OpenCloud before answering 202 with a job to ask about – the
+ * DSM reverse proxy gives up on requests after 60 s (504), and a slow upstream needs longer for 20 MB.
+ */
+export function createApi(cfg: ServerConfig, store: SermonStore = createStore(cfg.cloud, cfg.dataDir), { syncWaitMs = 20_000 } = {}) {
   const secret = secretFor(cfg);
   const shared = new SharedSettings(cfg.dataDir);
   const cloudFile = (url?: string) => (cfg.cloud && url ? new CloudFile(url, cfg.cloud) : null);
@@ -84,6 +88,34 @@ export function createApi(cfg: ServerConfig, store: SermonStore = createStore(cf
   rmSync(incoming, { recursive: true, force: true }); // left over from an interrupted upload
   mkdirSync(incoming, { recursive: true });
   const tmpFile = () => join(incoming, `${randomBytes(8).toString('hex')}.mp3`);
+
+  /** Uploads still being passed on to OpenCloud after the request was answered (GET /api/jobs/<id>). */
+  interface Job { state: 'running' | 'done' | 'failed'; file: string; status?: number; error?: string; ended?: number; }
+  const jobs = new Map<string, Job>();
+
+  /**
+   * Runs `task` (passing an upload on to the store) and answers as soon as it is done – or, if it takes longer
+   * than `syncWaitMs`, at once with 202 and a job id: the browser then asks until it is done.
+   */
+  async function finish(res: ServerResponse, name: string, task: Promise<void>) {
+    const job: Job = { state: 'running', file: name };
+    const started = Date.now();
+    const done = task.then(() => { job.state = 'done'; }, e => {
+      const known = e instanceof HttpError || e instanceof StoreError;
+      Object.assign(job, { state: 'failed', status: known ? e.status : 500, error: known ? e.message : 'server error' });
+      if (!known) console.error(e);
+      else if (e.status === 502) console.error(`${store.label}: ${name}: ${e.message} (nach ${Math.round((Date.now() - started) / 1000)} s)`);
+    }).finally(() => { job.ended = Date.now(); });
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([done, new Promise(r => { timer = setTimeout(r, syncWaitMs); })]);
+    clearTimeout(timer);
+    if (job.state === 'done') return sendJson(res, 200, { ok: true, file: name });
+    if (job.state === 'failed') return sendText(res, job.status!, job.error!);
+    for (const [id, j] of jobs) if (j.ended && Date.now() - j.ended > 3600_000) jobs.delete(id); // answered long ago
+    const id = randomBytes(8).toString('hex');
+    jobs.set(id, job);
+    sendJson(res, 202, { ok: true, file: name, job: id });
+  }
 
   const clientIp = (req: IncomingMessage) => {
     // behind the NAS reverse proxy: the last entry was added by the proxy itself
@@ -129,9 +161,11 @@ export function createApi(cfg: ServerConfig, store: SermonStore = createStore(cf
     if (await store.exists(name)) throw new HttpError(409, 'exists'); // before receiving megabytes in vain
     const tmp = tmpFile();
     const size = await receiveMp3(req, tmp);
-    await store.write(name, tmp, false);
-    log(`published ${name} to ${store.label} (${Math.round(size / 1024)} kB)`);
-    sendJson(res, 200, { ok: true, file: name });
+    const started = Date.now();
+    return finish(res, name, (async () => {
+      await store.write(name, tmp, false);
+      log(`published ${name} to ${store.label} (${Math.round(size / 1024)} kB, ${Math.round((Date.now() - started) / 1000)} s)`);
+    })());
   }
 
   /**
@@ -142,15 +176,18 @@ export function createApi(cfg: ServerConfig, store: SermonStore = createStore(cf
     if (!(await store.exists(name))) throw new HttpError(404, 'not found');
     const tmp = tmpFile();
     const size = await receiveMp3(req, tmp);
-    try {
-      await keepOriginal(name);
-    } catch (e) {
-      await unlink(tmp).catch(() => undefined);
-      throw e;
-    }
-    await store.write(name, tmp, true);
-    log(`replaced ${name} in ${store.label} (${Math.round(size / 1024)} kB)`);
-    sendJson(res, 200, { ok: true, file: name });
+    const started = Date.now();
+    return finish(res, name, (async () => {
+      try {
+        await keepOriginal(name);
+        log(`kept the first version of ${name} (${Math.round((Date.now() - started) / 1000)} s)`);
+      } catch (e) {
+        await unlink(tmp).catch(() => undefined);
+        throw e;
+      }
+      await store.write(name, tmp, true);
+      log(`replaced ${name} in ${store.label} (${Math.round(size / 1024)} kB, ${Math.round((Date.now() - started) / 1000)} s)`);
+    })());
   }
 
   async function keepOriginal(name: string) {
@@ -322,6 +359,13 @@ export function createApi(cfg: ServerConfig, store: SermonStore = createStore(cf
     }
 
     if (path === '/api/upload' && post) return upload(req, res);
+    // an upload that took longer than one request (see finish): running, done, or failed with the reason
+    const jobMatch = /^\/api\/jobs\/([0-9a-f]{16})$/.exec(path);
+    if (jobMatch && method === 'GET') {
+      const job = jobs.get(jobMatch[1]);
+      if (!job) throw new HttpError(404, 'unknown job');
+      return sendJson(res, 200, { state: job.state, file: job.file, status: job.status ?? null, error: job.error ?? null });
+    }
     // is a sermon of this name published already? (for everybody: the export warns before the work is done)
     if (path === '/api/published' && method === 'GET') {
       const name = new URL(req.url ?? '', 'http://x').searchParams.get('name') ?? '';

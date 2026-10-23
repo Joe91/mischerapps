@@ -5,7 +5,17 @@ import { createReadStream, openAsBlob } from 'node:fs';
 import { link, mkdir, readdir, rename, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { Readable } from 'node:stream';
+import { Agent, fetch as undiciFetch } from 'undici';
 import type { CloudConfig } from './config';
+
+/**
+ * Node's fetch gives up when the other side has not answered after 5 minutes (undici's headersTimeout and
+ * bodyTimeout) – too short for 20 MB over a slow upstream, and the upload is lost. Requests to OpenCloud use a
+ * connection without those limits; WebDav.request sets its own (30 min for files, 1 min otherwise).
+ */
+const patient = new Agent({ headersTimeout: 0, bodyTimeout: 0 });
+const cloudFetch = ((url: string, init?: RequestInit) =>
+  undiciFetch(url, { ...init, dispatcher: patient } as never)) as unknown as typeof fetch;
 
 export interface StoredFile { name: string; size: number; modified: string; }
 
@@ -107,7 +117,7 @@ export function parseMultistatus(xml: string): StoredFile[] {
 export class WebDav {
   private auth: string;
 
-  constructor(cloud: Pick<CloudConfig, 'user' | 'token'>, private fetchImpl: typeof fetch = fetch) {
+  constructor(cloud: Pick<CloudConfig, 'user' | 'token'>, private fetchImpl: typeof fetch = cloudFetch) {
     this.auth = 'Basic ' + Buffer.from(`${cloud.user}:${cloud.token}`).toString('base64');
   }
 
@@ -136,7 +146,7 @@ export class WebDavStore implements SermonStore {
   readonly label = 'OpenCloud';
   private dav: WebDav;
 
-  constructor(private cloud: CloudConfig, fetchImpl: typeof fetch = fetch) {
+  constructor(private cloud: CloudConfig, fetchImpl: typeof fetch = cloudFetch) {
     this.dav = new WebDav(cloud, fetchImpl);
   }
 

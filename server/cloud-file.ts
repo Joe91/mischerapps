@@ -15,7 +15,7 @@ const isoTime = (http: string | null | undefined) => { const d = new Date(http ?
 export class CloudFile {
   private dav: WebDav;
 
-  constructor(readonly url: string, cloud: Pick<CloudConfig, 'user' | 'token'>, fetchImpl: typeof fetch = fetch) {
+  constructor(readonly url: string, cloud: Pick<CloudConfig, 'user' | 'token'>, fetchImpl?: typeof fetch) {
     this.dav = new WebDav(cloud, fetchImpl);
   }
 

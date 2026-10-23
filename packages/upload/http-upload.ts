@@ -61,6 +61,29 @@ export const uploadFile = (file: Blob, name: string, onProgress: UploadProgress)
 export const replaceUpload = (name: string, file: Blob, onProgress: UploadProgress) =>
   send('PUT', `/api/uploads/${encodeURIComponent(name)}`, file, onProgress);
 
+/** Asks every 2 s how a job of the server is doing (see server/api.ts, finish); short network gaps are no failure. */
+async function waitForJob(id: string): Promise<void> {
+  for (let failures = 0; ;) {
+    await new Promise(r => setTimeout(r, 2000));
+    let res: Response;
+    try { res = await fetch(`/api/jobs/${id}`, { cache: 'no-store' }); } catch {
+      if (++failures > 30) throw new UploadError(0, '');
+      continue;
+    }
+    if (res.status === 404) {
+      throw new Error('Der Server kennt diesen Upload nicht mehr (neu gestartet?). Bitte in der Liste nachsehen, ob die Datei angekommen ist, sonst noch einmal hochladen.');
+    }
+    if (!res.ok) {
+      if (++failures > 30) throw new UploadError(res.status, await res.text().catch(() => ''));
+      continue;
+    }
+    const job = await res.json() as { state: string; status: number | null; error: string | null };
+    if (job.state === 'done') return;
+    if (job.state === 'failed') throw new UploadError(job.status ?? 500, job.error ?? '');
+    failures = 0;
+  }
+}
+
 function send(method: 'POST' | 'PUT', url: string, file: Blob,
   onProgress: UploadProgress): { promise: Promise<string>; abort: () => void } {
   const xhr = new XMLHttpRequest(); // XHR, because fetch has no upload progress
@@ -69,9 +92,12 @@ function send(method: 'POST' | 'PUT', url: string, file: Blob,
     xhr.setRequestHeader('Content-Type', 'audio/mpeg');
     xhr.upload.onprogress = e => e.lengthComputable && onProgress(e.loaded / e.total);
     xhr.upload.onload = () => onProgress(1, true);
-    xhr.onload = () => xhr.status >= 200 && xhr.status < 300
-      ? resolve(xhr.responseText)
-      : reject(new UploadError(xhr.status, xhr.responseText));
+    xhr.onload = () => {
+      // 202: the server is still passing the file on to OpenCloud; ask until it is done
+      if (xhr.status === 202) { waitForJob(JSON.parse(xhr.responseText).job).then(() => resolve(xhr.responseText), reject); return; }
+      if (xhr.status >= 200 && xhr.status < 300) resolve(xhr.responseText);
+      else reject(new UploadError(xhr.status, xhr.responseText));
+    };
     xhr.onerror = () => reject(new UploadError(0, ''));
     xhr.onabort = () => reject(new Error('Upload abgebrochen.'));
     xhr.send(file); // the bare file: the server writes it to disk as it arrives

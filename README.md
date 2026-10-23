@@ -86,6 +86,10 @@ gelöscht werden. Dateien mit Punkt am Anfang (`.session-secret`) zeigt File Sta
   eingetragen werden; die Anmeldung selbst bleibt (sie liegt im Server-Cookie).
 - **Upload-Größe:** Der Server schreibt eine Datei beim Hochladen gleich auf die Platte (`data/tmp/`) und reicht sie dann an OpenCloud
   weiter. Grenze: `maxUploadMb` (Standard 150).
+- **Langsame Leitung zu OpenCloud:** Dauert das Weiterreichen länger als 20 s, antwortet der Server sofort („angekommen“) und erledigt
+  den Rest im Hintergrund; die Seite fragt alle 2 s nach, bis die Datei in OpenCloud ist (oder meldet den Fehler). So bricht der
+  Reverse-Proxy von DSM (60 s) nichts ab. Für einzelne Übertragungen gilt eine Grenze von 30 Minuten; Fehlschläge stehen im Protokoll
+  des Containers als „OpenCloud: <datei>: … (nach … s)“.
 - Baut Portainer das Image nicht (Fehler „image not found“): auf dem NAS per SSH im geklonten Ordner `docker compose up -d --build`.
 - Meldet Portainer beim Aktualisieren „pull access denied for mischer-app“: Das Image gibt es nur lokal, nicht bei Docker Hub. Die
   Compose-Datei hat deshalb keinen `image:`-Namen (dann überspringt der Pull-Schritt es); bei einem älteren Stand `image:` entfernen
@@ -332,7 +336,9 @@ geht für Programme nicht; ein App-Token ist ein Passwort nur für diesen Zweck)
 4. **Prüfen**, am besten vor dem Neu-Deployen: `npm run cloud-check -- pfad/zur/config.json --write` (im Container:
    `node dist-server/cloud-check.mjs --write`). Das listet den Ordner, lädt eine kleine Testdatei hoch und wieder weg und prüft,
    ob die beiden Tabellen erreichbar sind (sie werden dabei nicht verändert).
-   Meldet es „Anmeldung abgelehnt (401)“, statt des Benutzernamens die Benutzer-ID (UUID) versuchen – bei Konten, die
+   Mit `--big` lädt es zusätzlich 20 MB hoch (versteckter Name, danach gelöscht) und zeigt alle 2 s den Fortschritt und am Ende
+   die mittlere Geschwindigkeit – um eine langsame Leitung von einer zu unterscheiden, die bei großen Dateien hängen bleibt
+   (`--ipv4`: nur über IPv4). Meldet es „Anmeldung abgelehnt (401)“, statt des Benutzernamens die Benutzer-ID (UUID) versuchen – bei Konten, die
    OpenCloud beim ersten Anmelden über ChurchTools selbst anlegt, verlangt OpenCloud sie. Der Server prüft den Zugang auch bei
    jedem Start und schreibt das Ergebnis ins Protokoll („OpenCloud erreichbar …“ oder den Fehler).
 
