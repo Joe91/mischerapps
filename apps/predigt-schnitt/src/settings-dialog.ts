@@ -2,7 +2,7 @@ import { DENOISE_ATTEN_DB } from '../../../packages/denoise/denoise';
 import { h, download, toast } from '../../../packages/ui-kit/dom';
 import type { Ctx } from './context';
 import {
-  DEREVERB_TRIED_DB, EXPORT_PRESETS, LOUDNESS_PRESETS, SOUND_OPTIONS, coverUrl, normalizeSettings, settingsStore,
+  DEREVERB_DB, EXPORT_PRESETS, LOUDNESS_PRESETS, SOUND_OPTIONS, coverUrl, normalizeSettings, settingsStore,
   type ExportPresetId, type LoudnessPresetId, type Settings, type SoundOption,
 } from './settings';
 
@@ -71,7 +71,7 @@ export function openSettings(ctx: Ctx, onSaved?: () => void) {
   const hp = sound('highpass'), comp = sound('compressor'), dn = sound('denoise');
   const dnDb = amount(`Stärke (Standard ${DENOISE_ATTEN_DB} dB)`, 'dB', () => draft.denoiseDb, v => { draft.denoiseDb = v; }, { min: 3, max: 40, step: 1 });
   dnDb.el.classList.add('sub');
-  const drDb = amount(`Nachhall unter der Sprache (0 = aus, im Hörvergleich ${DEREVERB_TRIED_DB} dB)`, 'dB', () => draft.dereverbDb, v => { draft.dereverbDb = v; },
+  const drDb = amount(`Nachhall unter der Sprache (Standard ${DEREVERB_DB} dB, 0 = aus)`, 'dB', () => draft.dereverbDb, v => { draft.dereverbDb = v; },
     { min: 0, max: 20, step: 1 });
   drDb.el.classList.add('sub');
   const syncSound = () => {

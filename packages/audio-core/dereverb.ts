@@ -2,7 +2,7 @@
 // reverb in the pauses but leaves much of it under the voice. Here the late reverb in each band is predicted from the
 // signal `delayMs` earlier, decayed as in a room with reverberation time `t60`, and that share is taken away – at most
 // `maxDb`. Gains are smoothed over time against "musical noise". On the sermons it shortened the decay after syllables
-// from about 105–140 ms to 80–120 ms at 10 dB. Off by default (Settings.dereverbDb = 0) until a blind test confirms it.
+// from about 105–140 ms to 80–120 ms at 10 dB, the default (DEREVERB_DB), which was preferred in a blind test.
 
 import { FFT } from './fft';
 

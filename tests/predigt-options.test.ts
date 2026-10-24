@@ -14,7 +14,7 @@ describe('processing defaults', () => {
     expect(s.denoise).toBe(true);
     expect(s.maxGainDb).toBe(55);
     expect(s.denoiseDb).toBe(18);
-    expect(s.dereverbDb).toBe(0); // the late-reverb stage is off until a blind test confirms it
+    expect(s.dereverbDb).toBe(10); // the late-reverb stage, preferred in a blind test
     const o = processOptions(ctxWith());
     expect(o).toMatchObject({ channels: 1, targetLufs: -19, highpass: true, compressor: true, denoise: true, maxGainDb: 55, start: 10, end: 1800 });
     expect(encodeOptions(ctxWith())).toEqual({ kbps: 96 });

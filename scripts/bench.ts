@@ -115,7 +115,7 @@ async function renderCheck(src: ByteSource, a: Awaited<ReturnType<typeof analyze
   const info = a.info, denoise = denoiseDb > 0;
   const o: ProcessOptions = {
     start, end, channels: 1, targetLufs: -19, truePeakDb: -1.5, highpass: true, compressor: true, denoise, denoiseDb,
-    dereverbDb: 0, // off, as the app's default (settings.ts; not imported here: it pulls in the cover picture)
+    dereverbDb: 10, // DEREVERB_DB in settings.ts (not imported here: it pulls in the cover picture)
     fadeIn: 0.5, fadeOut: 0.5, maxGainDb: 55,
   };
   const t0 = performance.now();

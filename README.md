@@ -209,7 +209,7 @@ Dieselben Regeln beim Export und beim Nachbearbeiten (`apps/predigt-schnitt/src/
 | Jahr, Datum (TYER, TDAT) | 2026, 18.10. | Datum des Gottesdienstes |
 | Kommentar (COMM) | `Lk 18,1-8 · 18.10.2026` | Bibelstelle (im Export eingetragen) und Datum |
 | Cover (APIC) | eAg-Logo, 1400 × 1400 px | eigenes Bild aus den Einstellungen, sonst `apps/predigt-schnitt/src/cover/` (neu erzeugen mit `scripts/make-cover.sh`) |
-| Mischer-App (TXXX) | `bearbeitet 24.10.2026 · -19 LUFS · Hall & Rauschen 18 dB · Kompression` (mit Nachhall-Stufe zusätzlich `· Nachhall 10 dB`) | Markierung: mit der App bearbeitet, siehe [Nachbearbeiten](#predigt-nachbearbeiten-nur-admin) |
+| Mischer-App (TXXX) | `bearbeitet 25.10.2026 · -19 LUFS · Hall & Rauschen 18 dB · Nachhall 10 dB · Kompression` | Markierung: mit der App bearbeitet, siehe [Nachbearbeiten](#predigt-nachbearbeiten-nur-admin) |
 
 Album-Interpret, Genre, „Titel ohne Predigtreihe“, „Album ohne Predigtreihe“ und die Prediger-Vorgabe stellt der Admin in
 Predigt-Schnitt unter ⚙ Einstellungen → *Dateiname & Tags* ein.
@@ -277,10 +277,10 @@ nennen in `target` das Ziel (`OpenCloud`, ohne Konfiguration `NAS`). Fehlercodes
    (MIT/Apache-2.0) als WebAssembly im Browser, nichts zu installieren. Senkt Nachhall und Hintergrundrauschen
    um höchstens 18 dB, so bleibt es natürlich (Stärke in den Einstellungen änderbar). Das Modell räumt die Pausen gründlich auf,
    lässt aber den Nachhall unter der Stimme weitgehend stehen; dafür gibt es eine zweite Stufe (**Nachhall unter der Sprache**,
-   in den Einstellungen 0–20 dB, **Standard 0 = aus**): Sie sagt für jedes Frequenzband aus dem 50 ms zuvor Gehörten voraus,
+   Standard 10 dB, in den Einstellungen 0–20 dB, 0 = aus): Sie sagt für jedes Frequenzband aus dem 50 ms zuvor Gehörten voraus,
    wie viel davon noch im Raum nachklingt (Nachhallzeit 1 s angenommen), und senkt genau diesen Anteil (Lebart/Habets). Mit
-   10 dB wurde das Abklingen nach Silben von 105–140 ms auf 80–120 ms kürzer und klang im ersten Hörvergleich am besten; ein
-   Blindtest steht noch aus, daher ist sie aus. Lang gehaltene Laute verlieren dabei etwas mit (im Test ≈ 1,5 dB gegenüber
+   10 dB wurde das Abklingen nach Silben von 105–140 ms auf 80–120 ms kürzer; im Blindtest (8 Paare) klang sie 5× besser,
+   3× gleich, nie schlechter. Lang gehaltene Laute verlieren dabei etwas mit (im Test ≈ 1,5 dB gegenüber
    ≈ 5,6 dB beim Nachhall). Kostet ≈ 17 s pro 30 min auf einem Kern (verteilt auf die Worker wie der Filter). Sehr leise Aufnahmen
    (Mischpult, −50 LUFS) werden dafür vorübergehend auf −23 LUFS angehoben – sonst hält das Modell die Stimme
    teils für Rauschen. Die Aufnahme wird in Abschnitte geteilt, die parallel in

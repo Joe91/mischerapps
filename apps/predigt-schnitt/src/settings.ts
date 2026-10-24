@@ -65,7 +65,7 @@ export function defaultSettings(): Settings {
     compressor: true,
     denoise: true, // ≈ 1 min per 30 min on 6 cores, mostly done in the background during the cut step
     denoiseDb: DENOISE_ATTEN_DB,
-    dereverbDb: 0, // off until a blind test confirms it (see DEREVERB_TRIED_DB)
+    dereverbDb: DEREVERB_DB,
     fadeIn: 0.5,
     fadeOut: 0.5, // sermons end with "Amen": just enough to avoid a click
     maxGainDb: 55, // desk recordings can be very quiet (−52 LUFS); the denoiser keeps the lifted noise down
@@ -85,8 +85,11 @@ export function defaultSettings(): Settings {
 /** Raised when changed defaults should replace what browsers and the server saved before. */
 export const SETTINGS_REV = 5;
 
-/** Late reverb under the voice: 10 dB sounded best in a first listening comparison (with 6 dB and without). */
-export const DEREVERB_TRIED_DB = 10;
+/**
+ * Late reverb under the voice: 10 dB sounded best in a listening comparison (with 6 dB and without) and was preferred in a
+ * blind test (8 pairs: 5 times better, 3 times no difference, never worse).
+ */
+export const DEREVERB_DB = 10;
 
 /**
  * Saved values (browser, server, imported file) from an older revision: drops those whose default has
