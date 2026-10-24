@@ -16,6 +16,7 @@ import { OverviewStore } from './overview-store';
 import { CloudFile } from './cloud-file';
 import { DamagedSettings, SharedSettings } from './shared-settings';
 import { createStore, StoreError, type SermonStore } from './sermon-store';
+import { Marks } from './marks';
 
 export class HttpError extends Error {
   constructor(public status: number, message: string) { super(message); }
@@ -83,6 +84,7 @@ export function createApi(cfg: ServerConfig, store: SermonStore = createStore(cf
   const limiter = new LoginLimiter();
   const maxUpload = cfg.maxUploadMb * 1024 * 1024;
   const originals = join(cfg.dataDir, ORIGINALS);
+  const marks = new Marks(cfg.dataDir, originals);
   // uploads arrive here before they go to the store (same disk as predigten/ for the local store)
   const incoming = join(cfg.dataDir, 'tmp');
   rmSync(incoming, { recursive: true, force: true }); // left over from an interrupted upload
@@ -411,7 +413,9 @@ export function createApi(cfg: ServerConfig, store: SermonStore = createStore(cf
     if (path === '/api/uploads' && method === 'GET') {
       admin();
       const files = (await store.list()).filter(f => FILE_NAME.test(f.name)).sort((a, b) => b.name.localeCompare(a.name));
-      return sendJson(res, 200, files.map(f => ({ ...f, original: existsSync(join(originals, f.name)) })));
+      // the app's mark in the file and in its first version: made with the app already, not to be processed again
+      const marked = await marks.of(store, files);
+      return sendJson(res, 200, files.map(f => ({ ...f, original: existsSync(join(originals, f.name)), processed: null, ...marked.get(f.name) })));
     }
     const uploadMatch = /^\/api\/uploads\/([^/]+)$/.exec(path);
     if (uploadMatch) {

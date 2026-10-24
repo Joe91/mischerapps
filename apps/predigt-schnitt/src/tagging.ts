@@ -9,7 +9,10 @@
 //   Genre         "Predigt" (settings)
 //   Jahr, Datum   the date of the service
 //   Kommentar     Bibelstelle · 18.10.2026
+//   Mischer-App   what was done to the audio, e.g. "bearbeitet 24.10.2026 · -19 LUFS · Hall & Rauschen 18 dB" (TXXX)
 import type { Tags } from '../../../packages/audio-core/tags';
+import type { ProcessOptions } from '../../../packages/audio-core/pipeline';
+import { isoDate } from './naming';
 import { seriesTitle, type OverviewEntry } from './overview';
 import type { Settings } from './settings';
 
@@ -33,6 +36,11 @@ export function autoTags(s: TagSettings, date: string, o: OverviewEntry | null) 
     series,
   };
 }
+
+/** The app's mark in each MP3 it makes (Tags.processed): Predigt nachbearbeiten does not take it again by mistake. */
+export const processedNote = (o: Pick<ProcessOptions, 'targetLufs' | 'compressor' | 'denoise' | 'denoiseDb'>, today = new Date()) =>
+  [`bearbeitet ${germanDate(isoDate(today))}`, `${o.targetLufs} LUFS`, o.denoise ? `Hall & Rauschen ${o.denoiseDb} dB` : '', o.compressor ? 'Kompression' : '']
+    .filter(Boolean).join(' · ');
 
 /** Comment: Bible passage and date. */
 export const commentFor = (scripture: string, date: string) => [scripture.trim(), germanDate(date)].filter(Boolean).join(' · ');

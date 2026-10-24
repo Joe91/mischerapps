@@ -16,10 +16,21 @@ export interface Tags {
   /** number within the album (the sermon series) */
   track?: number;
   cover?: { data: ArrayBuffer; mime: string };
+  /** the app's mark: what it did to the audio (TXXX "Mischer-App", see PROCESSED_KEY) */
+  processed?: string;
 }
+
+/**
+ * Every MP3 the app makes carries this user text frame (TXXX) with a short note of the processing, e.g.
+ * "bearbeitet 24.10.2026 · -19 LUFS · Hall & Rauschen 18 dB": Predigt nachbearbeiten does not take such a file
+ * again by mistake (filtering twice makes the voice thin, encoding twice costs quality).
+ */
+export const PROCESSED_KEY = 'Mischer-App';
 
 export function tagMp3(mp3: Uint8Array, t: Tags): Uint8Array {
   const w = new ID3Writer(mp3.buffer.slice(mp3.byteOffset, mp3.byteOffset + mp3.byteLength));
+  // first, so it stays within the first bytes of the file whatever the cover's size (see readHead in the server)
+  if (t.processed) w.setFrame('TXXX', { description: PROCESSED_KEY, value: t.processed });
   if (t.title) w.setFrame('TIT2', t.title);
   if (t.artist) w.setFrame('TPE1', [t.artist]);
   if (t.album) w.setFrame('TALB', t.album);
@@ -97,6 +108,10 @@ export function readTags(file: Uint8Array): Tags {
       t.year = Number(v.slice(0, 4)) || undefined;
       if (/^\d{4}-\d{2}-\d{2}/.test(v)) t.date = v.slice(0, 10); // ID3v2.4: full date in TDRC
     }
+    else if (id === 'TXXX') {
+      // description, value
+      if (decodeText(enc, b.subarray(1)) === PROCESSED_KEY) t.processed = decodeText(enc, b.subarray(skipTerminated(enc, b, 1))) || undefined;
+    }
     else if (id === 'TRCK') t.track = parseInt(decodeText(enc, b.subarray(1)), 10) || undefined; // "4" or "4/8"
     else if (id === 'COMM') {
       // language (3 bytes), description, text; prefer the comment without description (the one tagMp3 writes)
@@ -116,4 +131,44 @@ export function readTags(file: Uint8Array): Tags {
   if (cover) t.cover = cover;
   for (const k of ['title', 'artist', 'album', 'albumArtist', 'genre'] as const) if (!t[k]) delete t[k];
   return t;
+}
+
+/** UTF-16 with byte order mark, as ID3Writer writes text (encoding 1). */
+const utf16 = (text: string) => [0xff, 0xfe, ...[...text].flatMap(c => { const u = c.charCodeAt(0); return [u & 0xff, u >> 8]; })];
+
+/**
+ * Sets the app's mark in an MP3 (replacing one it has), changing nothing else: the frame goes first into its
+ * ID3v2.3/2.4 tag (into the padding if there is room – the file keeps its size), or into a new tag. The audio stays
+ * byte for byte. null for tags it does not change (ID3v2.2, unsynchronised, extended header, footer).
+ */
+export function setProcessedMark(file: Uint8Array, note: string): Uint8Array | null {
+  const body = new Uint8Array([1, ...utf16(PROCESSED_KEY), 0, 0, ...utf16(note)]);
+  const len = id3Length(file);
+  const version = len ? file[3] : 3;
+  if (len && ((version !== 3 && version !== 4) || file[5] & 0xd0)) return null;
+  const n = body.length;
+  const size = version === 4 ? [n >> 21 & 0x7f, n >> 14 & 0x7f, n >> 7 & 0x7f, n & 0x7f] : [n >>> 24, n >> 16 & 0xff, n >> 8 & 0xff, n & 0xff];
+  const frame = new Uint8Array([...'TXXX'].map(c => c.charCodeAt(0)).concat(size, [0, 0], [...body]));
+  // the frames up to the padding, without an earlier mark
+  const kept: Uint8Array[] = [];
+  let pos = 10;
+  const synchsafe = (i: number) => (file[i] & 0x7f) << 21 | (file[i + 1] & 0x7f) << 14 | (file[i + 2] & 0x7f) << 7 | (file[i + 3] & 0x7f);
+  while (len && pos + 10 <= len && /^[A-Z0-9]{4}$/.test(String.fromCharCode(...file.subarray(pos, pos + 4)))) {
+    const end = pos + 10 + (version === 4 ? synchsafe(pos + 4) : (file[pos + 4] << 24 | file[pos + 5] << 16 | file[pos + 6] << 8 | file[pos + 7]) >>> 0);
+    if (end > len) return null; // a frame reaches beyond the tag
+    const b = file.subarray(pos + 10, end);
+    const mark = String.fromCharCode(...file.subarray(pos, pos + 4)) === 'TXXX' && b.length > 1 && decodeText(b[0], b.subarray(1)) === PROCESSED_KEY;
+    if (!mark) kept.push(file.subarray(pos, end));
+    pos = end;
+  }
+  const framesLength = kept.reduce((a, f) => a + f.length, 0);
+  const tagSize = len && len - 10 >= framesLength + frame.length ? len - 10 : framesLength + frame.length + 1024;
+  const out = new Uint8Array(10 + tagSize + file.length - len);
+  out.set([0x49, 0x44, 0x33, version, len ? file[4] : 0, len ? file[5] : 0,
+    tagSize >> 21 & 0x7f, tagSize >> 14 & 0x7f, tagSize >> 7 & 0x7f, tagSize & 0x7f]);
+  out.set(frame, 10);
+  let at = 10 + frame.length;
+  for (const f of kept) { out.set(f, at); at += f.length; }
+  out.set(file.subarray(len), 10 + tagSize);
+  return out;
 }

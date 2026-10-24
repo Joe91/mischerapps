@@ -13,18 +13,21 @@ import { id3Length, readTags, tagMp3, type Tags } from '../../../packages/audio-
 import { h, $, fmtTime, fmtNum, fmtBytes, progressBar, download, toast } from '../../../packages/ui-kit/dom';
 import { replaceUpload, uploadFile } from '../../../packages/upload/http-upload';
 import { LOUDNESS_PRESETS, coverUrl, normalizeSettings, settingsStore, upgradeStored } from '../../predigt-schnitt/src/settings';
-import { choices, type AppState, type Ctx } from '../../predigt-schnitt/src/context';
+import { choices, processOptions, type AppState, type Ctx } from '../../predigt-schnitt/src/context';
 import { createAdvancedPanel, createPrepareView } from '../../predigt-schnitt/src/steps/prepare';
 import { isValidFileName, sanitizeFileName } from '../../predigt-schnitt/src/naming';
 import { dateFromFileName, fetchOverview, type OverviewEntry } from '../../predigt-schnitt/src/overview';
-import { germanDate, reprocessTags, type TagMode } from '../../predigt-schnitt/src/tagging';
+import { germanDate, processedNote, reprocessTags, type TagMode } from '../../predigt-schnitt/src/tagging';
 
-/** An entry of GET /api/uploads; `original`: replaced before, the first version is kept on the server. */
-interface Published { name: string; size: number; modified: string; original: boolean; }
+/**
+ * An entry of GET /api/uploads; `original`: replaced before, the first version is kept on the server. `processed`,
+ * `originalProcessed`: the app's mark in the file and in that first version (null: none), see PROCESSED_KEY.
+ */
+interface Published { name: string; size: number; modified: string; original: boolean; processed: string | null; originalProcessed?: string | null; }
 
-/** A file picked on this computer; `target` is the name it is published under. */
+/** A file picked on this computer; `target` is the name it is published under, `mark` the app's mark in it. */
 type ItemState = 'waiting' | 'running' | 'done' | 'error';
-interface LocalFile { file: File; target: string; state: ItemState; status: string; }
+interface LocalFile { file: File; target: string; state: ItemState; status: string; mark: string | null; }
 
 /** One file of a batch: where it comes from, the name it is published under, and how to show its state. */
 interface BatchItem { source: Source; target: string; set(state: ItemState, status: string): void; }
@@ -95,6 +98,19 @@ async function publishedTags(name: string): Promise<Tags> {
   reader.cancel().catch(noop);
   return readTags(bytes);
 }
+
+/** The app's mark in a file on this computer (only its ID3 tag is read). */
+async function markOf(file: File): Promise<string | null> {
+  const len = id3Length(new Uint8Array(await file.slice(0, 10).arrayBuffer()));
+  return len ? readTags(new Uint8Array(await file.slice(0, Math.min(len, 2 << 20)).arrayBuffer())).processed ?? null : null;
+}
+
+/** The mark of what reprocessing starts from: the first version, or the current one (see open()). */
+const markFor = (f: Published, fromOriginal = f.original) => (fromOriginal ? f.originalProcessed ?? null : f.processed);
+
+/** Made with the app already: processing it again filters twice and encodes the MP3 a second time. Asks first. */
+const confirmAgain = (what: string, mark: string) => confirm(`${what} ist schon mit der App bearbeitet (${mark}).\n\n` +
+  'Noch einmal bearbeiten reduziert Hall und Rauschen doppelt (die Stimme wird dünner) und kodiert die MP3 ein zweites Mal. Trotzdem bearbeiten?');
 
 async function coverFromDataUrl(dataUrl: string): Promise<Tags['cover']> {
   if (!dataUrl) return undefined;
@@ -170,13 +186,16 @@ if (!isAdmin()) {
   const tools = h('span', { class: 'row list-batch' });
   function renderTools() {
     for (const name of selected) if (!findPublished(name)) selected.delete(name); // gone from the folder
-    const shownNames = published.filter(f => f.name.toLowerCase().includes(filter.value.trim().toLowerCase())).map(f => f.name);
+    // files made with the app already are left out (they can still be ticked one by one)
+    const shown = published.filter(f => f.name.toLowerCase().includes(filter.value.trim().toLowerCase()));
+    const shownNames = shown.filter(f => !markFor(f)).map(f => f.name);
     const all = shownNames.length > 0 && shownNames.every(n => selected.has(n));
+    const label = shown.length > shownNames.length ? 'alle noch nicht bearbeiteten' : 'Alle';
     tools.replaceChildren(
       published.length ? h('button', {
         class: 'btn btn-sm btn-ghost', type: 'button', disabled: !!batch,
         onclick: () => { for (const n of shownNames) if (all) selected.delete(n); else selected.add(n); renderList(); },
-      }, all ? 'Auswahl aufheben' : 'Alle auswählen') : '',
+      }, all ? 'Auswahl aufheben' : `${label} auswählen`) : '',
       selected.size ? h('button', { class: 'btn btn-sm btn-primary', type: 'button', disabled: busy || !!batch, onclick: () => void runPublishedBatch() },
         `${selected.size} ausgewählte bearbeiten und ersetzen`) : '',
     );
@@ -198,6 +217,7 @@ if (!isAdmin()) {
           }),
           h('span', { class: 'file-cell mono' }, f.name),
           f.original ? h('span', { class: 'badge', title: `Wurde schon ersetzt; die erste Fassung liegt ${KEPT}.` }, 'nachbearbeitet') : '',
+          markFor(f) ? h('span', { class: 'badge', title: `Schon mit der App bearbeitet: ${markFor(f)}` }, 'schon bearbeitet') : '',
           h('span', { class: 'muted small' }, `${new Date(f.modified).toLocaleDateString('de-DE')} · ${fmtBytes(f.size)}`),
           publishedState.get(f.name) ? h('span', { class: `small local-status ${publishedState.get(f.name)!.state}` }, publishedState.get(f.name)!.status) : '',
           h('span', { class: 'row-buttons' },
@@ -206,7 +226,10 @@ if (!isAdmin()) {
               title: 'Die zuerst veröffentlichte Fassung herunterladen (vor dem ersten Ersetzen)',
             }, '⬇ erste Fassung') : '',
             h('a', { class: 'btn btn-sm btn-ghost', href: fileUrl(f.name), download: f.name, title: 'Herunterladen', 'aria-label': `${f.name} herunterladen` }, '⬇'),
-            h('button', { class: 'btn btn-sm', type: 'button', disabled: busy || !!batch, onclick: () => open({ published: f, fromOriginal: f.original }).catch(noop) }, 'Bearbeiten')),
+            h('button', {
+              class: 'btn btn-sm', type: 'button', disabled: busy || !!batch,
+              onclick: () => { if (!markFor(f) || confirmAgain(f.name, markFor(f)!)) open({ published: f, fromOriginal: f.original }).catch(noop); },
+            }, 'Bearbeiten')),
         ))) : '',
     );
   }
@@ -226,23 +249,26 @@ if (!isAdmin()) {
   drop.addEventListener('drop', e => {
     e.preventDefault();
     drop.classList.remove('over');
-    addLocal([...e.dataTransfer?.files ?? []]);
+    void addLocal([...e.dataTransfer?.files ?? []]);
   });
-  localInput.addEventListener('change', () => { addLocal([...localInput.files ?? []]); localInput.value = ''; });
+  localInput.addEventListener('change', () => { void addLocal([...localInput.files ?? []]); localInput.value = ''; });
 
-  function addLocal(files: File[]) {
+  async function addLocal(files: File[]) {
     const audio = files.filter(isAudio);
     if (audio.length < files.length) toast(`${files.length - audio.length} Datei(en) übersprungen – nur MP3 oder WAV.`, 'error');
     for (const file of audio) {
       if (locals.some(l => l.file.name === file.name && l.file.size === file.size)) continue;
-      locals.push({ file, target: sanitizeFileName(file.name.replace(/\.(mp3|wav)$/i, '')), state: 'waiting', status: '' });
+      const mark = await markOf(file).catch(() => null);
+      locals.push({ file, target: sanitizeFileName(file.name.replace(/\.(mp3|wav)$/i, '')), state: 'waiting', status: '', mark });
     }
     renderLocal();
   }
 
   function renderLocal() {
-    const todo = locals.filter(l => l.state !== 'done').length;
-    const done = locals.length - todo;
+    // files made with the app already are not taken by the batch (one by one after a question)
+    const todo = locals.filter(l => l.state !== 'done' && !l.mark).length;
+    const marked = locals.filter(l => l.state !== 'done' && l.mark).length;
+    const done = locals.length - todo - marked;
     localBox.replaceChildren(
       locals.length ? h('ul', { class: 'file-list' }, locals.map(l =>
         h('li', { class: `file-row${loaded && 'local' in loaded.src && loaded.src.local === l ? ' active' : ''}` },
@@ -251,14 +277,20 @@ if (!isAdmin()) {
           h('span', { class: 'muted small' }, fmtBytes(l.file.size)),
           l.state !== 'done' && findPublished(l.target)
             ? h('span', { class: 'badge', title: `Eine Datei mit diesem Namen liegt schon ${inT}; sie wird ersetzt.` }, 'ersetzt veröffentlichte') : '',
+          l.mark && l.state !== 'done' ? h('span', { class: 'badge', title: `Schon mit der App bearbeitet: ${l.mark}` }, 'schon bearbeitet') : '',
           l.status ? h('span', { class: `small local-status ${l.state}` }, l.status) : '',
           h('span', { class: 'row-buttons' },
-            h('button', { class: 'btn btn-sm', type: 'button', disabled: busy || !!batch, onclick: () => open({ local: l }).catch(noop) }, 'Bearbeiten'),
+            h('button', {
+              class: 'btn btn-sm', type: 'button', disabled: busy || !!batch,
+              onclick: () => { if (!l.mark || confirmAgain(l.file.name, l.mark)) open({ local: l }).catch(noop); },
+            }, 'Bearbeiten'),
             h('button', {
               class: 'btn btn-sm btn-ghost', type: 'button', title: 'Aus der Liste entfernen', 'aria-label': `${l.file.name} entfernen`,
               disabled: !!batch, onclick: () => { locals.splice(locals.indexOf(l), 1); renderLocal(); },
             }, '✕')),
         ))) : '',
+      !batch && marked ? h('p', { class: 'muted small' }, `${marked === 1 ? 'Eine Datei ist schon mit der App bearbeitet und wird'
+        : `${marked} Dateien sind schon mit der App bearbeitet und werden`} beim Stapel übersprungen – einzeln mit „Bearbeiten“ nach einer Rückfrage.`) : '',
       batch ? '' : locals.length ? h('div', { class: 'actions' },
         done ? h('button', { class: 'btn btn-ghost', type: 'button', onclick: () => { locals.splice(0, locals.length, ...locals.filter(l => l.state !== 'done')); renderLocal(); } },
           'Erledigte entfernen') : '',
@@ -437,7 +469,10 @@ if (!isAdmin()) {
       src.fromOriginal ? h('span', null, '· Ausgang: die zuerst veröffentlichte Fassung')
         : src.published.original ? h('span', null, '· Ausgang: die aktuelle, schon nachbearbeitete Fassung') : '',
       src.published.original ? h('button', {
-        class: 'btn btn-sm btn-ghost', type: 'button', onclick: () => open({ published: src.published, fromOriginal: !src.fromOriginal }).catch(noop),
+        class: 'btn btn-sm btn-ghost', type: 'button', onclick: () => {
+          const mark = markFor(src.published, !src.fromOriginal);
+          if (!mark || confirmAgain(src.fromOriginal ? 'Die aktuelle Fassung' : 'Die erste Fassung', mark)) open({ published: src.published, fromOriginal: !src.fromOriginal }).catch(noop);
+        },
       }, src.fromOriginal ? 'Stattdessen die aktuelle Fassung laden' : 'Die erste Fassung laden') : '',
     ] : [
       h('span', null, `Vom Rechner: ${src.local.file.name} · ${size}`),
@@ -464,7 +499,7 @@ if (!isAdmin()) {
     try {
       const l = loaded, p = await prepare.run();
       const cover = newCover.checked ? await coverFromDataUrl(coverUrl(settings)) : l.tags.cover;
-      const mp3 = tagMp3(p.mp3, { ...tags(), cover });
+      const mp3 = tagMp3(p.mp3, { ...tags(), cover, processed: processedNote(processOptions(ctx)) });
       if (loaded !== l) return; // another file was opened meanwhile
       resultStale();
       const blob = new Blob([mp3 as Uint8Array<ArrayBuffer>], { type: 'audio/mpeg' });
@@ -619,13 +654,17 @@ if (!isAdmin()) {
   }
 
   /** The local files that are not done yet. */
-  const runLocalBatch = () => runBatch(locals.filter(l => l.state !== 'done').map(l => ({
+  const runLocalBatch = () => runBatch(locals.filter(l => l.state !== 'done' && !l.mark).map(l => ({
     source: { local: l }, target: l.target, set: (state, status) => Object.assign(l, { state, status }),
   })));
 
   /** The ticked published files: each is processed from its first version and replaced. */
   const runPublishedBatch = () => {
     const files = published.filter(f => selected.has(f.name));
+    const again = files.filter(f => markFor(f));
+    if (again.length && !confirm(`${again.length === 1 ? 'Eine der ausgewählten Dateien ist' : `${again.length} der ausgewählten Dateien sind`} schon mit der App bearbeitet:\n\n` +
+      `${again.slice(0, 20).map(f => f.name).join('\n')}${again.length > 20 ? '\n…' : ''}\n\n` +
+      'Noch einmal bearbeiten reduziert Hall und Rauschen doppelt (die Stimme wird dünner) und kodiert die MP3 ein zweites Mal. Trotzdem alle bearbeiten?')) return;
     for (const f of files) publishedState.set(f.name, { state: 'waiting', status: 'wartet' });
     return runBatch(files.map(f => ({
       source: { published: f, fromOriginal: f.original }, target: f.name,

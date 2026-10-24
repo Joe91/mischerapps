@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { id3Length, readTags, tagMp3 } from '../packages/audio-core/tags';
+import { setProcessedMark, id3Length, readTags, tagMp3 } from '../packages/audio-core/tags';
 
 const FRAME = new Uint8Array([0xff, 0xfb, 0x90, 0x64, 0, 0, 0, 0]);
 
@@ -40,6 +40,53 @@ describe('readTags', () => {
   it('ignores files without an ID3v2 tag', () => {
     expect(readTags(FRAME)).toEqual({});
     expect(readTags(new Uint8Array([0x49, 0x44, 0x33, 2, 0, 0, 0, 0, 0, 0]))).toEqual({});
+  });
+});
+
+describe('the app\'s mark', () => {
+  const note = 'bearbeitet 24.10.2026 · -19 LUFS · Hall & Rauschen 18 dB · Kompression';
+  const cover = new Uint8Array(3000);
+  cover.set([0x89, 0x50, 0x4e, 0x47]);
+
+  it('is written first into the tag and read back', () => {
+    const tagged = tagMp3(FRAME, { title: 'x', processed: note, cover: { data: cover.buffer, mime: 'image/png' } });
+    expect(String.fromCharCode(...tagged.subarray(10, 14))).toBe('TXXX'); // within the first bytes, whatever the cover
+    expect(readTags(tagged.subarray(0, 200)).processed).toBe(note);
+    expect(readTags(tagMp3(FRAME, { title: 'x' })).processed).toBeUndefined();
+  });
+
+  it('is added afterwards into the padding, without touching anything else', () => {
+    const tagged = tagMp3(FRAME, { title: 'Zeit - 04', track: 4, cover: { data: cover.buffer, mime: 'image/png' } });
+    const marked = setProcessedMark(tagged, note)!;
+    expect(marked.length).toBe(tagged.length);
+    expect(marked.subarray(id3Length(marked))).toEqual(FRAME);
+    const t = readTags(marked);
+    expect([t.processed, t.title, t.track, new Uint8Array(t.cover!.data)]).toEqual([note, 'Zeit - 04', 4, cover]);
+  });
+
+  it('gets a tag of its own, or a larger one, where there is no room', () => {
+    const bare = setProcessedMark(FRAME, note)!;
+    expect([readTags(bare).processed, bare.subarray(id3Length(bare))]).toEqual([note, FRAME]);
+    const v24 = id3v24([['TIT2', [3, ...utf8('Größer')]]]);
+    const marked = setProcessedMark(v24, note)!;
+    expect(readTags(marked)).toEqual({ title: 'Größer', processed: note });
+    expect(marked.subarray(id3Length(marked))).toEqual(FRAME);
+  });
+
+  it('replaces an earlier mark, keeping the size', () => {
+    const tagged = tagMp3(FRAME, { title: 'x', processed: 'bearbeitet (nachträglich markiert)', cover: { data: cover.buffer, mime: 'image/png' } });
+    const marked = setProcessedMark(tagged, note)!;
+    expect(marked.length).toBe(tagged.length);
+    expect(marked.subarray(id3Length(marked))).toEqual(FRAME);
+    const t = readTags(marked);
+    expect([t.processed, t.title, new Uint8Array(t.cover!.data)]).toEqual([note, 'x', cover]);
+    expect(String.fromCharCode(...marked).split('TXXX').length).toBe(2); // only one mark
+  });
+
+  it('leaves tags alone it cannot change safely', () => {
+    const unsynchronised = tagMp3(FRAME, { title: 'x' });
+    unsynchronised[5] = 0x80;
+    expect(setProcessedMark(unsynchronised, note)).toBeNull();
   });
 });
 

@@ -11,6 +11,7 @@ import { hashPassword, LoginLimiter, signSession, verifyPassword, verifySession 
 import { parseConfig, ConfigError, type ServerConfig } from '../server/config';
 import { isoDate } from '../packages/plan/cells';
 import { readPlanXlsx } from '../packages/plan/plan';
+import { tagMp3 } from '../packages/audio-core/tags';
 import writeExcelFile from 'write-excel-file/universal';
 
 let server: Server, base: string, dir: string;
@@ -254,6 +255,25 @@ describe('upload', () => {
     expect((await fetch(`${base}/api/uploads`, as(m))).status).toBe(403);
     const list = await (await fetch(`${base}/api/uploads`, as(a))).json();
     expect(list.map((f: { name: string }) => f.name)).toContain('predigt_2030-01-06.mp3');
+  });
+
+  it('tells which files carry the app\'s mark, also for the first version kept on the NAS', async () => {
+    const m = (await login('mischer', 'mischer-password')).cookie, a = (await login('admin', 'admin-password')).cookie;
+    const frame = new Uint8Array([0xff, 0xfb, 0x90, 0x64, 0, 0, 0, 0]);
+    const marked = (note: string) => new Blob([tagMp3(frame, { title: 'x', processed: note }) as Uint8Array<ArrayBuffer>]);
+    const entry = async (name: string) => (await (await fetch(`${base}/api/uploads`, as(a))).json() as
+      { name: string; processed: string | null; originalProcessed?: string | null }[]).find(f => f.name === name);
+    expect((await mp3(m, 'marked.mp3', marked('bearbeitet 24.10.2026'))).status).toBe(200);
+    expect((await mp3(m, 'raw.mp3', new Blob([tagMp3(frame, { title: 'x' }) as Uint8Array<ArrayBuffer>]))).status).toBe(200);
+    expect(await entry('marked.mp3')).toMatchObject({ processed: 'bearbeitet 24.10.2026' });
+    expect(await entry('raw.mp3')).toMatchObject({ processed: null });
+    // replaced by a processed version: the first version (where reprocessing starts) has no mark
+    const put = await fetch(`${base}/api/uploads/raw.mp3`, { method: 'PUT', headers: { Cookie: a, 'Content-Type': 'audio/mpeg' }, body: marked('bearbeitet 25.10.2026') });
+    expect(put.status).toBe(200);
+    expect(await entry('raw.mp3')).toMatchObject({ processed: 'bearbeitet 25.10.2026', originalProcessed: null });
+    // remembered for the next list, per version
+    const known = Object.keys(JSON.parse(await readFile(join(dir, 'data/marks.json'), 'utf8')));
+    expect(known.some(k => k.startsWith('marked.mp3|')) && known.some(k => k.startsWith('original/raw.mp3|'))).toBe(true);
   });
 
   it('lets the admin download and replace a published file, keeping the first version', async () => {

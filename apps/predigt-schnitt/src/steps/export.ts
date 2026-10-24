@@ -6,7 +6,7 @@ import { choices, processOptions, STEP, type Ctx, type Rendered, type Step } fro
 import { EXPORT_PRESETS, LOUDNESS_PRESETS, coverUrl } from '../settings';
 import { buildFileName, isValidFileName, sanitizeFileName } from '../naming';
 import { fetchOverview } from '../overview';
-import { autoTags, commentFor } from '../tagging';
+import { autoTags, commentFor, processedNote } from '../tagging';
 import { createAdvancedPanel, createPrepareView } from './prepare';
 
 async function coverFromDataUrl(dataUrl: string): Promise<Tags['cover']> {
@@ -169,7 +169,7 @@ export function createExportStep(ctx: Ctx): Step {
     if (st.rendered?.key === key) return st.rendered;
     const t = tags();
     const p = await prepare.run();
-    const mp3 = tagMp3(p.mp3, { ...t, cover: await coverFromDataUrl(coverUrl(s)) });
+    const mp3 = tagMp3(p.mp3, { ...t, cover: await coverFromDataUrl(coverUrl(s)), processed: processedNote(processOptions(ctx)) });
     if (st.rendered) URL.revokeObjectURL(st.rendered.url);
     const blob = new Blob([mp3 as Uint8Array<ArrayBuffer>], { type: 'audio/mpeg' });
     st.rendered = { blob, url: URL.createObjectURL(blob), stats: p.stats, key };

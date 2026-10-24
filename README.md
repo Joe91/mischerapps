@@ -58,6 +58,7 @@ Gespeichert wird alles im Ordner `data` (sichern wie jeden anderen Ordner):
 ```
 data/einsatzplan.xlsx      Einsatzplan (Mischer, Beamer, Musikteam): zuletzt aus OpenCloud gelesene Kopie (ohne cloud.plan: vom Admin hochgeladen)
 data/settings.json         gemeinsame Einstellungen (vom Admin)
+data/marks.json            welche veröffentlichten Predigten schon mit der App bearbeitet sind (aus den Dateien gelesen, wird neu aufgebaut)
 data/original/             die zuerst veröffentlichte Fassung nachbearbeiteter Predigten (Sicherung, nicht veröffentlicht)
 data/tmp/                  Uploads, während sie ankommen (wird beim Start geleert)
 data/.session-secret       Schlüssel für die Anmelde-Cookies (wird automatisch angelegt)
@@ -208,6 +209,7 @@ Dieselben Regeln beim Export und beim Nachbearbeiten (`apps/predigt-schnitt/src/
 | Jahr, Datum (TYER, TDAT) | 2026, 18.10. | Datum des Gottesdienstes |
 | Kommentar (COMM) | `Lk 18,1-8 · 18.10.2026` | Bibelstelle (im Export eingetragen) und Datum |
 | Cover (APIC) | eAg-Logo, 1400 × 1400 px | eigenes Bild aus den Einstellungen, sonst `apps/predigt-schnitt/src/cover/` (neu erzeugen mit `scripts/make-cover.sh`) |
+| Mischer-App (TXXX) | `bearbeitet 24.10.2026 · -19 LUFS · Hall & Rauschen 18 dB · Kompression` | Markierung: mit der App bearbeitet, siehe [Nachbearbeiten](#predigt-nachbearbeiten-nur-admin) |
 
 Album-Interpret, Genre, „Titel ohne Predigtreihe“, „Album ohne Predigtreihe“ und die Prediger-Vorgabe stellt der Admin in
 Predigt-Schnitt unter ⚙ Einstellungen → *Dateiname & Tags* ein.
@@ -309,6 +311,15 @@ Die Kachel sieht nur der Admin; der Server lässt nur ihn zu.
    den Einstellungen). Hat eine Datei vom Rechner keine Tags, gelten die der gleichnamigen veröffentlichten Datei als ihre eigenen. Die Berechnung startet sofort im Hintergrund
    (15 min Predigt ≈ 45 s, 26 min ≈ 75 s auf einem 12-Kern-PC, mit Entrauschen). *MP3 erstellen*, vorher/nachher anhören, dann
    veröffentlichen oder herunterladen.
+
+**Schon bearbeitet:** Jede MP3 der App trägt eine Markierung (Angabe „Mischer-App“, siehe [Angaben der MP3](#angaben-der-mp3)).
+Solche Dateien zeigt die Liste als „schon bearbeitet“ – bei nachbearbeiteten zählt die erste Fassung, von der aus neu bearbeitet
+wird. „Alle auswählen“ und der Stapel vom Rechner lassen sie aus; einzeln bearbeiten geht nach einer Rückfrage. Noch einmal bearbeiten
+würde Hall und Rauschen doppelt reduzieren (die Stimme wird dünner) und die MP3 ein zweites Mal kodieren. Der Server liest die
+Markierung beim Auflisten aus dem Anfang jeder Datei und merkt sich das Ergebnis pro Version in `data/marks.json`.
+Dateien ohne Markierung, die doch schon bearbeitet sind, markiert `npm run mark-processed -- config.json --write` (im Container
+`node dist-server/mark-processed.mjs --write`; ohne `--write` wird nur gezählt); mit `--note "bearbeitet 24.10.2026 · …"` bekommen alle
+Dateien genau diesen Text, eine andere Markierung wird ersetzt. Nur das Tag ändert sich, das Audio bleibt Byte für Byte.
 
 **Ersetzen:** Gibt es in OpenCloud schon eine Datei mit dem Namen, wird sie ersetzt (die App fragt vorher, beim Stapel einmal für alle);
 sonst kommt eine neue dazu. Vor dem ersten Ersetzen sichert der Server die bisherige Datei auf dem NAS in `data/original/`;

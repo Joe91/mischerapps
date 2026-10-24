@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { autoTags, commentFor, germanDate, reprocessTags } from '../apps/predigt-schnitt/src/tagging';
+import { autoTags, commentFor, germanDate, processedNote, reprocessTags } from '../apps/predigt-schnitt/src/tagging';
 import { dateFromFileName, seriesTitle } from '../apps/predigt-schnitt/src/overview';
 import { defaultSettings } from '../apps/predigt-schnitt/src/settings';
 import { buildFileName } from '../apps/predigt-schnitt/src/naming';
@@ -32,6 +32,14 @@ describe('tags filled in automatically', () => {
     expect(dateFromFileName('aufnahme.mp3')).toBeNull();
     expect(buildFileName('predigt-eag-{jjmmdd}-{reihe}-{nr}', { title: '', preacher: '', date: '2026-10-18', scripture: '', album: '', series: 'Was ist Wahrheit?', track: 4 }))
       .toBe('predigt-eag-261018-Was-ist-Wahrheit-04.mp3');
+  });
+});
+
+describe('the app\'s mark', () => {
+  it('names the day and what was done to the audio', () => {
+    const o = { targetLufs: -19, compressor: true, denoise: true, denoiseDb: 18 };
+    expect(processedNote(o, new Date(2026, 9, 24))).toBe('bearbeitet 24.10.2026 · -19 LUFS · Hall & Rauschen 18 dB · Kompression');
+    expect(processedNote({ ...o, compressor: false, denoise: false }, new Date(2026, 9, 24))).toBe('bearbeitet 24.10.2026 · -19 LUFS');
   });
 });
 
