@@ -6,7 +6,8 @@ import type { Meta } from './naming';
 export interface Rendered {
   blob: Blob;
   url: string;
-  stats: Omit<RenderResult, 'mp3'>;
+  /** null: only the tags were changed, the audio is the file's own (Predigt nachbearbeiten, "Nur Angaben") */
+  stats: Omit<RenderResult, 'mp3'> | null;
   /** options the file was rendered with, to detect stale exports */
   key: string;
 }

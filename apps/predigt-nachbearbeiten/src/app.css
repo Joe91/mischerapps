@@ -29,3 +29,5 @@ fieldset.plain { border: 0; padding: 0; margin: 0; min-width: 0; }
 .file-row .pick { width: 1.15rem; height: 1.15rem; }
 .list-batch { margin-left: auto; }
 .batch-bar { margin-top: .6rem; }
+.local-status.skipped { color: var(--warn); }
+.badge.missing { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }

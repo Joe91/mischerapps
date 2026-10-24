@@ -265,7 +265,7 @@ describe('upload', () => {
       { name: string; processed: string | null; originalProcessed?: string | null }[]).find(f => f.name === name);
     expect((await mp3(m, 'marked.mp3', marked('bearbeitet 24.10.2026'))).status).toBe(200);
     expect((await mp3(m, 'raw.mp3', new Blob([tagMp3(frame, { title: 'x' }) as Uint8Array<ArrayBuffer>]))).status).toBe(200);
-    expect(await entry('marked.mp3')).toMatchObject({ processed: 'bearbeitet 24.10.2026' });
+    expect(await entry('marked.mp3')).toMatchObject({ processed: 'bearbeitet 24.10.2026', missing: ['Prediger/in', 'Datum'] });
     expect(await entry('raw.mp3')).toMatchObject({ processed: null });
     // replaced by a processed version: the first version (where reprocessing starts) has no mark
     const put = await fetch(`${base}/api/uploads/raw.mp3`, { method: 'PUT', headers: { Cookie: a, 'Content-Type': 'audio/mpeg' }, body: marked('bearbeitet 25.10.2026') });

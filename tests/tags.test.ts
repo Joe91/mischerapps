@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { setProcessedMark, id3Length, readTags, tagMp3 } from '../packages/audio-core/tags';
+import { setProcessedMark, id3Length, readTags, stripTags, tagMp3 } from '../packages/audio-core/tags';
 
 const FRAME = new Uint8Array([0xff, 0xfb, 0x90, 0x64, 0, 0, 0, 0]);
 
@@ -87,6 +87,16 @@ describe('the app\'s mark', () => {
     const unsynchronised = tagMp3(FRAME, { title: 'x' });
     unsynchronised[5] = 0x80;
     expect(setProcessedMark(unsynchronised, note)).toBeNull();
+  });
+});
+
+describe('stripTags', () => {
+  it('leaves the audio, without ID3v2 at the start and ID3v1 at the end', () => {
+    const v1 = new Uint8Array(128);
+    v1.set([0x54, 0x41, 0x47]);
+    const tagged = tagMp3(FRAME, { title: 'x' });
+    expect(stripTags(new Uint8Array([...tagged, ...v1]))).toEqual(FRAME);
+    expect(stripTags(FRAME)).toEqual(FRAME);
   });
 });
 

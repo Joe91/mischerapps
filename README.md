@@ -58,7 +58,7 @@ Gespeichert wird alles im Ordner `data` (sichern wie jeden anderen Ordner):
 ```
 data/einsatzplan.xlsx      Einsatzplan (Mischer, Beamer, Musikteam): zuletzt aus OpenCloud gelesene Kopie (ohne cloud.plan: vom Admin hochgeladen)
 data/settings.json         gemeinsame Einstellungen (vom Admin)
-data/marks.json            welche veröffentlichten Predigten schon mit der App bearbeitet sind (aus den Dateien gelesen, wird neu aufgebaut)
+data/marks.json            je veröffentlichter Predigt: schon mit der App bearbeitet? fehlende Angaben? (aus den Dateien gelesen, wird neu aufgebaut)
 data/original/             die zuerst veröffentlichte Fassung nachbearbeiteter Predigten (Sicherung, nicht veröffentlicht)
 data/tmp/                  Uploads, während sie ankommen (wird beim Start geleert)
 data/.session-secret       Schlüssel für die Anmelde-Cookies (wird automatisch angelegt)
@@ -311,6 +311,19 @@ Die Kachel sieht nur der Admin; der Server lässt nur ihn zu.
    den Einstellungen). Hat eine Datei vom Rechner keine Tags, gelten die der gleichnamigen veröffentlichten Datei als ihre eigenen. Die Berechnung startet sofort im Hintergrund
    (15 min Predigt ≈ 45 s, 26 min ≈ 75 s auf einem 12-Kern-PC, mit Entrauschen). *MP3 erstellen*, vorher/nachher anhören, dann
    veröffentlichen oder herunterladen.
+
+**Nur Angaben:** Der Knopf *Nur Angaben* (bei veröffentlichten und bei MP3-Dateien vom Rechner) ändert nur Titel, Prediger/in,
+Datum usw. – das Audio bleibt Byte für Byte, wie es ist, nichts wird neu bearbeitet oder kodiert, und eine vorhandene Markierung bleibt.
+Bei veröffentlichten Dateien nimmt er immer die aktuelle Fassung (nicht die erste, die oft noch unbearbeitet ist). Geht sofort, auch bei
+schon bearbeiteten Dateien.
+
+**Fehlende Angaben:** Beide Listen zeigen „fehlt: Prediger/in, Datum …“ bei Dateien, deren Tag eine Pflichtangabe fehlt.
+Ohne Titel, Prediger/in und Datum wird nichts veröffentlicht – auch nicht einzeln (die App sagt, was fehlt).
+Der Stapel (beide Quellen) nimmt im Modus *automatisch* nur Dateien, deren Datum im Dateinamen steht und die die eAg-Übersicht kennt;
+die anderen markiert er gleich zu Beginn als „nur einzeln: … nicht in der eAg-Übersicht“ (bzw. „kein Datum im Dateinamen“) und lässt
+sie aus, ebenso eine Datei, bei der nach dem Laden noch eine Pflichtangabe fehlt. Einzeln bearbeitet zeigt der Editor bei solchen
+Dateien einen Hinweis, die Angaben von Hand zu prüfen. Ist die eAg-Übersicht gar nicht erreichbar, startet der Stapel nicht.
+Im Modus *aus der Datei übernehmen* zählt nur, ob die Pflichtangaben da sind.
 
 **Schon bearbeitet:** Jede MP3 der App trägt eine Markierung (Angabe „Mischer-App“, siehe [Angaben der MP3](#angaben-der-mp3)).
 Solche Dateien zeigt die Liste als „schon bearbeitet“ – bei nachbearbeiteten zählt die erste Fassung, von der aus neu bearbeitet

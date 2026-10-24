@@ -9,25 +9,30 @@ import './app.css';
 import { ensureLogin, isAdmin, logout, publishTarget } from '../../../packages/auth/auth';
 import { loadShared } from '../../../packages/settings/shared';
 import { AudioWorkerClient } from '../../../packages/audio-core/client';
-import { id3Length, readTags, tagMp3, type Tags } from '../../../packages/audio-core/tags';
+import { id3Length, readTags, stripTags, tagMp3, type Tags } from '../../../packages/audio-core/tags';
 import { h, $, fmtTime, fmtNum, fmtBytes, progressBar, download, toast } from '../../../packages/ui-kit/dom';
 import { replaceUpload, uploadFile } from '../../../packages/upload/http-upload';
 import { LOUDNESS_PRESETS, coverUrl, normalizeSettings, settingsStore, upgradeStored } from '../../predigt-schnitt/src/settings';
-import { choices, processOptions, type AppState, type Ctx } from '../../predigt-schnitt/src/context';
+import { choices, processOptions, type AppState, type Ctx, type Rendered } from '../../predigt-schnitt/src/context';
 import { createAdvancedPanel, createPrepareView } from '../../predigt-schnitt/src/steps/prepare';
 import { isValidFileName, sanitizeFileName } from '../../predigt-schnitt/src/naming';
 import { dateFromFileName, fetchOverview, type OverviewEntry } from '../../predigt-schnitt/src/overview';
-import { germanDate, processedNote, reprocessTags, type TagMode } from '../../predigt-schnitt/src/tagging';
+import { germanDate, missingTags, processedNote, reprocessTags, type TagMode } from '../../predigt-schnitt/src/tagging';
 
 /**
  * An entry of GET /api/uploads; `original`: replaced before, the first version is kept on the server. `processed`,
  * `originalProcessed`: the app's mark in the file and in that first version (null: none), see PROCESSED_KEY.
  */
-interface Published { name: string; size: number; modified: string; original: boolean; processed: string | null; originalProcessed?: string | null; }
+interface Published {
+  name: string; size: number; modified: string; original: boolean; processed: string | null; originalProcessed?: string | null;
+  /** required details the file's tag lacks (missingTags) */
+  missing: string[];
+}
 
-/** A file picked on this computer; `target` is the name it is published under, `mark` the app's mark in it. */
-type ItemState = 'waiting' | 'running' | 'done' | 'error';
-interface LocalFile { file: File; target: string; state: ItemState; status: string; mark: string | null; }
+/** `skipped`: left out by a batch (details unknown), only by hand */
+type ItemState = 'waiting' | 'running' | 'done' | 'error' | 'skipped';
+/** A file picked on this computer; `target` is the name it is published under, `mark` the app's mark in it, `missing` the required details its tag lacks. */
+interface LocalFile { file: File; target: string; state: ItemState; status: string; mark: string | null; missing: string[]; }
 
 /** One file of a batch: where it comes from, the name it is published under, and how to show its state. */
 interface BatchItem { source: Source; target: string; set(state: ItemState, status: string): void; }
@@ -37,12 +42,13 @@ type Source = { published: Published; fromOriginal: boolean } | { local: LocalFi
 /**
  * `fileTags`: as read (for a local file without tags: those of the published file it replaces, `tagsFromPublished`);
  * `tags`: what will be written, by the tag rules (tagging.ts) with the eAg-Übersicht's entry for `day` – the date in
- * the file name.
+ * the file name. `tagsOnly`: "Nur Angaben" – new tags on the file's own `audio`, which keeps its `mark`.
  */
 interface Loaded {
   src: Source; target: string; size: number;
   fileTags: Tags; tagsFromPublished: boolean; day: string | null; overview: OverviewEntry | null | 'unavailable';
   tags: Tags;
+  tagsOnly: boolean; audio: Uint8Array | null; mark: string | null;
 }
 
 const ACCEPT = '.mp3,.wav,audio/mpeg,audio/wav,audio/x-wav,audio/wave';
@@ -99,11 +105,18 @@ async function publishedTags(name: string): Promise<Tags> {
   return readTags(bytes);
 }
 
-/** The app's mark in a file on this computer (only its ID3 tag is read). */
-async function markOf(file: File): Promise<string | null> {
+/** The tags of a file on this computer (only its ID3 tag is read). */
+async function headTags(file: File): Promise<Tags> {
   const len = id3Length(new Uint8Array(await file.slice(0, 10).arrayBuffer()));
-  return len ? readTags(new Uint8Array(await file.slice(0, Math.min(len, 2 << 20)).arrayBuffer())).processed ?? null : null;
+  return len ? readTags(new Uint8Array(await file.slice(0, Math.min(len, 2 << 20)).arrayBuffer())) : {};
 }
+
+/** Required details a file's own tag lacks, as a badge in the lists. */
+const missingBadge = (missing: string[]) => (missing.length ? h('span', {
+  class: 'badge missing', title: 'Diese Angaben fehlen in der Datei. „Nur Angaben“ trägt sie nach, ohne das Audio neu zu bearbeiten.',
+}, `fehlt: ${missing.join(', ')}`) : '');
+
+const TAGS_ONLY_HINT = 'Nur Titel, Prediger/in, Datum usw. ändern – das Audio bleibt, wie es ist (keine neue Bearbeitung)';
 
 /** The mark of what reprocessing starts from: the first version, or the current one (see open()). */
 const markFor = (f: Published, fromOriginal = f.original) => (fromOriginal ? f.originalProcessed ?? null : f.processed);
@@ -218,6 +231,7 @@ if (!isAdmin()) {
           h('span', { class: 'file-cell mono' }, f.name),
           f.original ? h('span', { class: 'badge', title: `Wurde schon ersetzt; die erste Fassung liegt ${KEPT}.` }, 'nachbearbeitet') : '',
           markFor(f) ? h('span', { class: 'badge', title: `Schon mit der App bearbeitet: ${markFor(f)}` }, 'schon bearbeitet') : '',
+          missingBadge(f.missing ?? []),
           h('span', { class: 'muted small' }, `${new Date(f.modified).toLocaleDateString('de-DE')} · ${fmtBytes(f.size)}`),
           publishedState.get(f.name) ? h('span', { class: `small local-status ${publishedState.get(f.name)!.state}` }, publishedState.get(f.name)!.status) : '',
           h('span', { class: 'row-buttons' },
@@ -226,6 +240,11 @@ if (!isAdmin()) {
               title: 'Die zuerst veröffentlichte Fassung herunterladen (vor dem ersten Ersetzen)',
             }, '⬇ erste Fassung') : '',
             h('a', { class: 'btn btn-sm btn-ghost', href: fileUrl(f.name), download: f.name, title: 'Herunterladen', 'aria-label': `${f.name} herunterladen` }, '⬇'),
+            // the current version: its audio stays (the first version would bring back the unprocessed sound)
+            h('button', {
+              class: 'btn btn-sm btn-ghost', type: 'button', disabled: busy || !!batch, title: TAGS_ONLY_HINT,
+              onclick: () => open({ published: f, fromOriginal: false }, true).catch(noop),
+            }, 'Nur Angaben'),
             h('button', {
               class: 'btn btn-sm', type: 'button', disabled: busy || !!batch,
               onclick: () => { if (!markFor(f) || confirmAgain(f.name, markFor(f)!)) open({ published: f, fromOriginal: f.original }).catch(noop); },
@@ -258,17 +277,21 @@ if (!isAdmin()) {
     if (audio.length < files.length) toast(`${files.length - audio.length} Datei(en) übersprungen – nur MP3 oder WAV.`, 'error');
     for (const file of audio) {
       if (locals.some(l => l.file.name === file.name && l.file.size === file.size)) continue;
-      const mark = await markOf(file).catch(() => null);
-      locals.push({ file, target: sanitizeFileName(file.name.replace(/\.(mp3|wav)$/i, '')), state: 'waiting', status: '', mark });
+      const own = await headTags(file).catch((): Tags => ({}));
+      locals.push({
+        file, target: sanitizeFileName(file.name.replace(/\.(mp3|wav)$/i, '')), state: 'waiting', status: '',
+        mark: own.processed ?? null, missing: missingTags(own),
+      });
     }
     renderLocal();
   }
 
   function renderLocal() {
     // files made with the app already are not taken by the batch (one by one after a question)
-    const todo = locals.filter(l => l.state !== 'done' && !l.mark).length;
+    // nor those a batch skipped because their details are unknown
+    const todo = locals.filter(l => l.state !== 'done' && l.state !== 'skipped' && !l.mark).length;
     const marked = locals.filter(l => l.state !== 'done' && l.mark).length;
-    const done = locals.length - todo - marked;
+    const done = locals.filter(l => l.state === 'done').length;
     localBox.replaceChildren(
       locals.length ? h('ul', { class: 'file-list' }, locals.map(l =>
         h('li', { class: `file-row${loaded && 'local' in loaded.src && loaded.src.local === l ? ' active' : ''}` },
@@ -278,8 +301,13 @@ if (!isAdmin()) {
           l.state !== 'done' && findPublished(l.target)
             ? h('span', { class: 'badge', title: `Eine Datei mit diesem Namen liegt schon ${inT}; sie wird ersetzt.` }, 'ersetzt veröffentlichte') : '',
           l.mark && l.state !== 'done' ? h('span', { class: 'badge', title: `Schon mit der App bearbeitet: ${l.mark}` }, 'schon bearbeitet') : '',
+          l.state !== 'done' ? missingBadge(l.missing) : '',
           l.status ? h('span', { class: `small local-status ${l.state}` }, l.status) : '',
           h('span', { class: 'row-buttons' },
+            /\.mp3$/i.test(l.file.name) ? h('button', {
+              class: 'btn btn-sm btn-ghost', type: 'button', disabled: busy || !!batch, title: TAGS_ONLY_HINT,
+              onclick: () => open({ local: l }, true).catch(noop),
+            }, 'Nur Angaben') : '',
             h('button', {
               class: 'btn btn-sm', type: 'button', disabled: busy || !!batch,
               onclick: () => { if (!l.mark || confirmAgain(l.file.name, l.mark)) open({ local: l }).catch(noop); },
@@ -318,7 +346,7 @@ if (!isAdmin()) {
    * Loads a file into the editor and decodes it in the worker: a published one (by default its first version, so it
    * is not processed twice) or from this computer. Resolves false when nothing was started; rejects on errors.
    */
-  async function open(src: Source): Promise<boolean> {
+  async function open(src: Source, tagsOnly = false): Promise<boolean> {
     if (busy) return false;
     if (!batch && st.rendered && !st.uploadedAs && !confirm('Das Ergebnis wurde noch nicht gespeichert. Trotzdem eine andere Datei laden?')) return false;
     busy = true;
@@ -334,18 +362,22 @@ if (!isAdmin()) {
     try {
       let file: File, bytes: Uint8Array;
       if (pub) {
-        bytes = await fetchPublished(name, pub.fromOriginal, p => bar.set(p * 0.3, `Wird aus ${T} geladen …`));
+        bytes = await fetchPublished(name, pub.fromOriginal, p => bar.set(p * (tagsOnly ? 1 : 0.3), `Wird aus ${T} geladen …`));
         file = new File([bytes as Uint8Array<ArrayBuffer>], name, { type: 'audio/mpeg' });
       } else {
         file = local!.file;
         bytes = new Uint8Array(await file.arrayBuffer());
       }
-      const share = pub ? 0.3 : 0;
-      const out = await ctx.worker.analyze(file, { minSermon: settings.minSermonMin * 60, mergeGap: settings.mergeGapSec },
-        p => bar.set(share + p * (1 - share), 'Wird dekodiert …'));
-      Object.assign(st, { file, audioUrl: URL.createObjectURL(file), analysis: out, start: 0, end: out.info.duration, fileName: name });
+      if (tagsOnly) Object.assign(st, { file, audioUrl: URL.createObjectURL(file), fileName: name }); // nothing to decode
+      else {
+        const share = pub ? 0.3 : 0;
+        const out = await ctx.worker.analyze(file, { minSermon: settings.minSermonMin * 60, mergeGap: settings.mergeGapSec },
+          p => bar.set(share + p * (1 - share), 'Wird dekodiert …'));
+        Object.assign(st, { file, audioUrl: URL.createObjectURL(file), analysis: out, start: 0, end: out.info.duration, fileName: name });
+      }
       const target = pub ? name : local!.target;
       let tags = readTags(bytes), tagsFromPublished = false;
+      const mark = tags.processed ?? null;
       // a local copy without tags must not wipe title, preacher and cover of the published file it replaces
       if (local && !Object.keys(tags).length && findPublished(target)) {
         tags = await publishedTags(target).catch(() => ({}));
@@ -353,7 +385,10 @@ if (!isAdmin()) {
       }
       const day = dateFromFileName(target);
       const overview = day ? await fetchOverview(day) : null;
-      loaded = { src, target, size: file.size, fileTags: tags, tagsFromPublished, day, overview, tags: tagsFor(tags, day, overview) };
+      loaded = {
+        src, target, size: file.size, fileTags: tags, tagsFromPublished, day, overview, tags: tagsFor(tags, day, overview),
+        tagsOnly, audio: tagsOnly ? stripTags(bytes) : null, mark,
+      };
       loadStatus.replaceChildren();
       showEditor();
       return true;
@@ -375,7 +410,7 @@ if (!isAdmin()) {
 
   // the MP3 is prepared in the background as soon as a file is loaded and after every option change
   const prepare = createPrepareView(ctx);
-  const advanced = createAdvancedPanel(ctx, null, () => { resultStale(); if (loaded) prepare.start(); },
+  const advanced = createAdvancedPanel(ctx, null, () => { if (loaded?.tagsOnly) return; resultStale(); if (loaded) prepare.start(); },
     'Gilt für alle Dateien auf dieser Seite. Die Standardwerte von Predigt-Schnitt bleiben unverändert.');
   const tagModeSelect = h('select', null,
     h('option', { value: 'auto' }, 'automatisch, wie beim Export'),
@@ -395,7 +430,7 @@ if (!isAdmin()) {
 
   const tagField = (label: string, attrs: Record<string, unknown> = {}) => {
     const input = h('input', attrs);
-    input.addEventListener('input', resultStale);
+    input.addEventListener('input', () => { resultStale(); checkTags(); });
     return { input, el: h('label', null, label, input) };
   };
   const title = tagField('Titel'), artist = tagField('Prediger/in'), album = tagField('Album (Predigtreihe)');
@@ -404,6 +439,8 @@ if (!isAdmin()) {
   const date = tagField('Datum', { type: 'date' });
   const comment = tagField('Kommentar', { placeholder: 'z. B. Lk 18,1-8 · 18.10.2026' });
   const tagInfo = h('span');
+  /** details that are unknown or missing: shown above the fields, publishing waits for them */
+  const tagWarn = h('div');
   const newCover = h('input', { type: 'checkbox' });
   const coverHint = h('small');
   const coverRow = h('label', { class: 'check-hint cover-row' }, newCover, h('span', null, settings.coverDataUrl ? 'Cover aus den Einstellungen verwenden' : 'eAg-Cover verwenden'), coverHint);
@@ -437,6 +474,21 @@ if (!isAdmin()) {
       : !l.day ? '· kein Datum im Dateinamen – Angaben aus der Datei'
       : o === 'unavailable' ? ''
       : o ? `· Angaben aus der eAg-Übersicht vom ${germanDate(l.day)}` : `· ${germanDate(l.day)} steht nicht in der eAg-Übersicht`;
+    checkTags();
+  }
+
+  /** Where the eAg-Übersicht could not help, and which required details are still empty. */
+  function checkTags() {
+    const l = loaded;
+    if (!l) return;
+    const unknown = tagMode === 'keep' ? ''
+      : !l.day ? 'Kein Datum im Dateinamen – die Angaben stammen aus der Datei.'
+      : l.overview === 'unavailable' ? 'Die eAg-Übersicht war nicht erreichbar – die Angaben stammen aus der Datei.'
+      : !l.overview ? `${germanDate(l.day)} steht nicht in der eAg-Übersicht – die Angaben stammen aus der Datei.` : '';
+    const missing = missingTags(tags());
+    tagWarn.replaceChildren(
+      unknown ? h('div', { class: 'notice warn' }, `${unknown} Bitte Titel, Prediger/in und Album prüfen. Im Stapel wird so eine Datei übersprungen.`) : '',
+      missing.length ? h('div', { class: 'notice error' }, `Es fehlt: ${missing.join(', ')} – ohne diese Angaben wird nicht veröffentlicht.`) : '');
   }
 
   const createBtn = h('button', { class: 'btn btn-primary', type: 'button', onclick: () => create().catch(noop) }, 'MP3 erstellen');
@@ -462,13 +514,13 @@ if (!isAdmin()) {
 
   function showEditor() {
     const l = loaded!, t = l.tags, src = l.src;
-    heading.textContent = `3 · ${l.target}`;
-    const size = `${fmtTime(st.end, false)} · ${fmtBytes(l.size)}`;
+    heading.textContent = `3 · ${l.target}${l.tagsOnly ? ' · nur Angaben' : ''}`;
+    const size = `${l.tagsOnly ? '' : `${fmtTime(st.end, false)} · `}${fmtBytes(l.size)}`;
     source.replaceChildren(...'published' in src ? [
       h('span', null, `Aus ${T} · ${size}`),
       src.fromOriginal ? h('span', null, '· Ausgang: die zuerst veröffentlichte Fassung')
         : src.published.original ? h('span', null, '· Ausgang: die aktuelle, schon nachbearbeitete Fassung') : '',
-      src.published.original ? h('button', {
+      src.published.original && !l.tagsOnly ? h('button', {
         class: 'btn btn-sm btn-ghost', type: 'button', onclick: () => {
           const mark = markFor(src.published, !src.fromOriginal);
           if (!mark || confirmAgain(src.fromOriginal ? 'Die aktuelle Fassung' : 'Die erste Fassung', mark)) open({ published: src.published, fromOriginal: !src.fromOriginal }).catch(noop);
@@ -478,7 +530,7 @@ if (!isAdmin()) {
       h('span', null, `Vom Rechner: ${src.local.file.name} · ${size}`),
       h('span', null, findPublished(l.target) ? `· ersetzt die gleichnamige Datei ${inT}` : `· wird neu ${inT} veröffentlicht`),
       l.tagsFromPublished ? h('span', null, `· Titel, Prediger und Cover von der Datei ${inT} übernommen`) : '',
-    ], tagInfo);
+    ], l.tagsOnly ? h('span', null, '· nur die Angaben ändern sich, das Audio bleibt, wie es ist') : '', tagInfo);
     before.src = st.audioUrl!;
     showTags();
     newCover.checked = !t.cover;
@@ -486,7 +538,10 @@ if (!isAdmin()) {
     status.replaceChildren();
     saveStatus.replaceChildren();
     editor.classList.remove('hidden');
-    prepare.start();
+    prepare.el.classList.toggle('hidden', l.tagsOnly);
+    prepare.details.classList.toggle('hidden', l.tagsOnly);
+    createBtn.textContent = l.tagsOnly ? 'Angaben übernehmen' : 'MP3 erstellen';
+    if (!l.tagsOnly) prepare.start();
     if (!batch) editor.scrollIntoView({ behavior: 'smooth', block: 'start' });
   }
 
@@ -497,13 +552,22 @@ if (!isAdmin()) {
     createBtn.disabled = true;
     status.replaceChildren();
     try {
-      const l = loaded, p = await prepare.run();
-      const cover = newCover.checked ? await coverFromDataUrl(coverUrl(settings)) : l.tags.cover;
-      const mp3 = tagMp3(p.mp3, { ...tags(), cover, processed: processedNote(processOptions(ctx)) });
+      const l = loaded;
+      let mp3: Uint8Array, stats: Rendered['stats'] = null;
+      if (l.tagsOnly) {
+        // the file's own audio with new tags; its mark stays (or stays absent: nothing was processed)
+        const cover = newCover.checked ? await coverFromDataUrl(coverUrl(settings)) : l.tags.cover;
+        mp3 = tagMp3(l.audio!, { ...tags(), cover, processed: l.mark ?? undefined });
+      } else {
+        const p = await prepare.run();
+        const cover = newCover.checked ? await coverFromDataUrl(coverUrl(settings)) : l.tags.cover;
+        mp3 = tagMp3(p.mp3, { ...tags(), cover, processed: processedNote(processOptions(ctx)) });
+        stats = p.stats;
+      }
       if (loaded !== l) return; // another file was opened meanwhile
       resultStale();
       const blob = new Blob([mp3 as Uint8Array<ArrayBuffer>], { type: 'audio/mpeg' });
-      st.rendered = { blob, url: URL.createObjectURL(blob), stats: p.stats, key: '' };
+      st.rendered = { blob, url: URL.createObjectURL(blob), stats, key: '' };
       showResult();
     } catch (e) {
       status.replaceChildren(h('div', { class: 'notice error' }, `Erstellen fehlgeschlagen: ${(e as Error).message}`));
@@ -518,7 +582,7 @@ if (!isAdmin()) {
     const r = st.rendered, l = loaded;
     if (!r || !l) return;
     const target = LOUDNESS_PRESETS[choices(ctx).loudnessPreset];
-    const tpOk = r.stats.truePeakDb <= target.tp + 0.05;
+    const s = r.stats; // null: only the tags were changed
     nameInput.value = l.target;
     showSaveLabel();
     saveStatus.replaceChildren();
@@ -526,10 +590,12 @@ if (!isAdmin()) {
       h('div', { class: 'result-box' },
         h('div', { class: 'listen' }, h('span', { class: 'muted small' }, 'Nachher'), h('audio', { controls: true, src: r.url, preload: 'metadata' })),
         h('dl', { class: 'stats' },
-          h('dt', null, 'Länge'), h('dd', null, fmtTime(r.stats.duration, false)),
+          s ? [h('dt', null, 'Länge'), h('dd', null, fmtTime(s.duration, false))] : '',
           h('dt', null, 'Größe'), h('dd', null, `${fmtBytes(r.blob.size)} (vorher ${fmtBytes(l.size)})`),
-          h('dt', null, 'Lautheit'), h('dd', null, `${fmtNum(r.stats.outputLufs)} LUFS (Ziel ${fmtNum(target.lufs)})`),
-          h('dt', null, 'True Peak'), h('dd', { class: tpOk ? '' : 'warn-text' }, `${fmtNum(r.stats.truePeakDb)} dBTP (max. ${fmtNum(target.tp)})`),
+          s ? [
+            h('dt', null, 'Lautheit'), h('dd', null, `${fmtNum(s.outputLufs)} LUFS (Ziel ${fmtNum(target.lufs)})`),
+            h('dt', null, 'True Peak'), h('dd', { class: s.truePeakDb <= target.tp + 0.05 ? '' : 'warn-text' }, `${fmtNum(s.truePeakDb)} dBTP (max. ${fmtNum(target.tp)})`),
+          ] : [h('dt', null, 'Audio'), h('dd', null, 'unverändert – nur die Angaben sind neu')],
         ),
       ),
       h('label', { class: 'file-name' }, `Dateiname – liegt eine Datei mit diesem Namen ${inT}, wird sie ersetzt`, nameInput),
@@ -552,6 +618,11 @@ if (!isAdmin()) {
     nameInput.value = name;
     showSaveLabel();
     if (!isValidFileName(name)) { saveStatus.replaceChildren(h('div', { class: 'notice error' }, 'Ungültiger Dateiname.')); return false; }
+    const missing = missingTags(tags());
+    if (missing.length) {
+      saveStatus.replaceChildren(h('div', { class: 'notice error' }, `Es fehlt: ${missing.join(', ')}. Bitte oben eintragen, dann die MP3 neu erstellen.`));
+      return false;
+    }
     const existing = findPublished(name);
     if (existing && !confirmed && !confirm(existing.original
       ? `${name} ${inT} ersetzen?\n\nDie aktuelle Fassung wird überschrieben; die zuerst veröffentlichte bleibt ${KEPT} erhalten.`
@@ -592,6 +663,18 @@ if (!isAdmin()) {
    * Processes the files one after another with the options above and publishes them (replacing files of the same
    * name after one question). While OpenCloud still takes a file, the next one is already processed.
    */
+  /**
+   * Why a batch leaves this file out: no date in its name, or a date the eAg-Übersicht does not know ("unavailable":
+   * no answer from it at all). Null if it may go through; with tags taken from the file ("keep") always.
+   */
+  async function unknownDetails(target: string): Promise<string | 'unavailable' | null> {
+    if (tagMode === 'keep') return null;
+    const day = dateFromFileName(target);
+    if (!day) return 'kein Datum im Dateinamen';
+    const o = await fetchOverview(day);
+    return o === 'unavailable' ? o : o ? null : `${germanDate(day)} nicht in der eAg-Übersicht`;
+  }
+
   async function runBatch(items: BatchItem[]) {
     if (batch || busy || !items.length) return;
     const targets = items.map(i => i.target);
@@ -600,7 +683,22 @@ if (!isAdmin()) {
       toast(`Mehrere Dateien ergäben denselben Namen (${twice.join(', ')}). Bitte eine davon entfernen.`, 'error', 8000);
       return;
     }
-    const clashes = targets.filter(t => findPublished(t));
+    // unattended only where the eAg-Übersicht knows the date; the others are left for doing by hand
+    const unknown = await Promise.all(items.map(i => unknownDetails(i.target)));
+    if (unknown.includes('unavailable')) {
+      toast('Die eAg-Übersicht ist gerade nicht erreichbar – ohne sie veröffentlicht der Stapel nichts. Bitte später noch einmal.', 'error', 10000);
+      return;
+    }
+    items.forEach((item, k) => { if (unknown[k]) item.set('skipped', `nur einzeln: ${unknown[k]}`); });
+    const total = items.length;
+    items = items.filter((_, k) => !unknown[k]);
+    let skipped = total - items.length;
+    if (!items.length) {
+      renderLists();
+      toast(`Keine Datei für den Stapel: bei ${skipped === 1 ? 'der' : 'allen'} fehlen die Angaben in der eAg-Übersicht – nur einzeln möglich.`, 'error', 8000);
+      return;
+    }
+    const clashes = items.map(i => i.target).filter(t => findPublished(t));
     if (clashes.length && !confirm(`${clashes.length === 1 ? 'Diese Datei wird' : `Diese ${clashes.length} Dateien werden`} ${inT} ersetzt:\n\n` +
       `${clashes.join('\n')}\n\nDie zuerst veröffentlichte Fassung bleibt jeweils ${KEPT} erhalten.`)) return;
     if (st.rendered && !st.uploadedAs && !confirm('Das aktuelle Ergebnis wurde noch nicht gespeichert. Trotzdem starten?')) return;
@@ -616,6 +714,13 @@ if (!isAdmin()) {
       renderLists();
       try {
         if (!await open(item.source)) throw new Error('nicht geladen');
+        const missing = missingTags(tags());
+        if (missing.length) {
+          item.set('skipped', `nur einzeln: es fehlt ${missing.join(', ')}`);
+          skipped++;
+          renderLists();
+          continue;
+        }
         await create();
         // a quick server may report "stored" before save() returns: then the item is done, nothing to wait for
         let settled = false, waiting = false;
@@ -650,11 +755,12 @@ if (!isAdmin()) {
     optionsSet.disabled = editorSet.disabled = false;
     await loadList();
     renderLists();
-    toast(`${ok} von ${items.length} Dateien ${clashes.length === items.length ? 'ersetzt' : 'veröffentlicht'}${stopped ? ' – angehalten' : ''}.`, ok === items.length ? 'ok' : 'error', 8000);
+    toast(`${ok} von ${total} Dateien ${clashes.length === items.length ? 'ersetzt' : 'veröffentlicht'}` +
+      `${skipped ? `, ${skipped} übersprungen (nur einzeln möglich)` : ''}${stopped ? ' – angehalten' : ''}.`, ok === total ? 'ok' : 'error', 8000);
   }
 
   /** The local files that are not done yet. */
-  const runLocalBatch = () => runBatch(locals.filter(l => l.state !== 'done' && !l.mark).map(l => ({
+  const runLocalBatch = () => runBatch(locals.filter(l => l.state !== 'done' && l.state !== 'skipped' && !l.mark).map(l => ({
     source: { local: l }, target: l.target, set: (state, status) => Object.assign(l, { state, status }),
   })));
 
@@ -668,13 +774,14 @@ if (!isAdmin()) {
     for (const f of files) publishedState.set(f.name, { state: 'waiting', status: 'wartet' });
     return runBatch(files.map(f => ({
       source: { published: f, fromOriginal: f.original }, target: f.name,
-      set: (state, status) => { publishedState.set(f.name, { state, status }); if (state === 'done') selected.delete(f.name); },
+      set: (state, status) => { publishedState.set(f.name, { state, status }); if (state === 'done' || state === 'skipped') selected.delete(f.name); },
     })));
   };
 
   const editorSet = h('fieldset', { class: 'plain' },
     source,
     h('div', { class: 'listen' }, h('span', { class: 'muted small' }, 'Vorher'), before),
+    tagWarn,
     h('div', { class: 'grid tag-grid' }, title.el, artist.el, album.el, track.el, albumArtist.el, genre.el, date.el, comment.el),
     coverRow,
     prepare.el,

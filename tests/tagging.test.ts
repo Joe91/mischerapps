@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { autoTags, commentFor, germanDate, processedNote, reprocessTags } from '../apps/predigt-schnitt/src/tagging';
+import { autoTags, commentFor, germanDate, missingTags, processedNote, reprocessTags } from '../apps/predigt-schnitt/src/tagging';
 import { dateFromFileName, seriesTitle } from '../apps/predigt-schnitt/src/overview';
 import { defaultSettings } from '../apps/predigt-schnitt/src/settings';
 import { buildFileName } from '../apps/predigt-schnitt/src/naming';
@@ -32,6 +32,14 @@ describe('tags filled in automatically', () => {
     expect(dateFromFileName('aufnahme.mp3')).toBeNull();
     expect(buildFileName('predigt-eag-{jjmmdd}-{reihe}-{nr}', { title: '', preacher: '', date: '2026-10-18', scripture: '', album: '', series: 'Was ist Wahrheit?', track: 4 }))
       .toBe('predigt-eag-261018-Was-ist-Wahrheit-04.mp3');
+  });
+});
+
+describe('tags required for publishing', () => {
+  it('are title, preacher and date', () => {
+    expect(missingTags({ title: 'Zeit - 04', artist: 'Jörg Müller', date: '2026-10-18' })).toEqual([]);
+    expect(missingTags({ title: 'Zeit - 04', artist: '  ', date: undefined })).toEqual(['Prediger/in', 'Datum']);
+    expect(missingTags({})).toEqual(['Titel', 'Prediger/in', 'Datum']);
   });
 });
 

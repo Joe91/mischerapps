@@ -42,6 +42,10 @@ export const processedNote = (o: Pick<ProcessOptions, 'targetLufs' | 'compressor
   [`bearbeitet ${germanDate(isoDate(today))}`, `${o.targetLufs} LUFS`, o.denoise ? `Hall & Rauschen ${o.denoiseDb} dB` : '', o.compressor ? 'Kompression' : '']
     .filter(Boolean).join(' · ');
 
+/** What an MP3 must not be published without (labels as in the page); empty if nothing is missing. */
+export const missingTags = (t: Pick<Tags, 'title' | 'artist' | 'date'>) =>
+  ([['Titel', t.title], ['Prediger/in', t.artist], ['Datum', t.date]] as const).filter(([, v]) => !v?.trim()).map(([label]) => label);
+
 /** Comment: Bible passage and date. */
 export const commentFor = (scripture: string, date: string) => [scripture.trim(), germanDate(date)].filter(Boolean).join(' · ');
 

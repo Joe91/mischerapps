@@ -133,6 +133,13 @@ export function readTags(file: Uint8Array): Tags {
   return t;
 }
 
+/** The audio of an MP3 without its tags: ID3v2 at the start, ID3v1 ("TAG", 128 bytes) at the end. */
+export function stripTags(mp3: Uint8Array): Uint8Array {
+  const start = id3Length(mp3);
+  const v1 = mp3.length - start >= 128 && mp3[mp3.length - 128] === 0x54 && mp3[mp3.length - 127] === 0x41 && mp3[mp3.length - 126] === 0x47;
+  return mp3.subarray(start, v1 ? mp3.length - 128 : mp3.length);
+}
+
 /** UTF-16 with byte order mark, as ID3Writer writes text (encoding 1). */
 const utf16 = (text: string) => [0xff, 0xfe, ...[...text].flatMap(c => { const u = c.charCodeAt(0); return [u & 0xff, u >> 8]; })];
 

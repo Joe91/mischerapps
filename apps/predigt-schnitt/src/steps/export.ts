@@ -236,7 +236,7 @@ export function createExportStep(ctx: Ctx): Step {
 
   function showResult() {
     const r = st.rendered;
-    if (!r) { result.replaceChildren(); return; }
+    if (!r?.stats) { result.replaceChildren(); return; }
     const target = LOUDNESS_PRESETS[choices(ctx).loudnessPreset];
     const tpOk = r.stats.truePeakDb <= target.tp + 0.05;
     result.replaceChildren(

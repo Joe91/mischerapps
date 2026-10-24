@@ -413,9 +413,10 @@ export function createApi(cfg: ServerConfig, store: SermonStore = createStore(cf
     if (path === '/api/uploads' && method === 'GET') {
       admin();
       const files = (await store.list()).filter(f => FILE_NAME.test(f.name)).sort((a, b) => b.name.localeCompare(a.name));
-      // the app's mark in the file and in its first version: made with the app already, not to be processed again
+      // the app's mark in the file and in its first version (made with the app already, not to be processed again),
+      // and which required details the file's tag lacks
       const marked = await marks.of(store, files);
-      return sendJson(res, 200, files.map(f => ({ ...f, original: existsSync(join(originals, f.name)), processed: null, ...marked.get(f.name) })));
+      return sendJson(res, 200, files.map(f => ({ ...f, original: existsSync(join(originals, f.name)), processed: null, missing: [], ...marked.get(f.name) })));
     }
     const uploadMatch = /^\/api\/uploads\/([^/]+)$/.exec(path);
     if (uploadMatch) {
