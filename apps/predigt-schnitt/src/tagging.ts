@@ -38,8 +38,9 @@ export function autoTags(s: TagSettings, date: string, o: OverviewEntry | null) 
 }
 
 /** The app's mark in each MP3 it makes (Tags.processed): Predigt nachbearbeiten does not take it again by mistake. */
-export const processedNote = (o: Pick<ProcessOptions, 'targetLufs' | 'compressor' | 'denoise' | 'denoiseDb'>, today = new Date()) =>
-  [`bearbeitet ${germanDate(isoDate(today))}`, `${o.targetLufs} LUFS`, o.denoise ? `Hall & Rauschen ${o.denoiseDb} dB` : '', o.compressor ? 'Kompression' : '']
+export const processedNote = (o: Pick<ProcessOptions, 'targetLufs' | 'compressor' | 'denoise' | 'denoiseDb' | 'dereverbDb'>, today = new Date()) =>
+  [`bearbeitet ${germanDate(isoDate(today))}`, `${o.targetLufs} LUFS`, o.denoise ? `Hall & Rauschen ${o.denoiseDb} dB` : '',
+    o.denoise && o.dereverbDb > 0 ? `Nachhall ${o.dereverbDb} dB` : '', o.compressor ? 'Kompression' : '']
     .filter(Boolean).join(' · ');
 
 /** What an MP3 must not be published without (labels as in the page); empty if nothing is missing. */

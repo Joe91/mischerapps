@@ -87,7 +87,7 @@ describe('WAV input', () => {
     expect(a.info.kind).toBe('wav');
     expect(a.info.duration).toBe(12);
     expect(a.peaks.length).toBeGreaterThan(590);
-    const o = { start: 1, end: 11, channels: 1 as const, targetLufs: -19, truePeakDb: -1.5, highpass: true, compressor: false, denoise: false, denoiseDb: 12, fadeIn: 0.5, fadeOut: 0.5, maxGainDb: 20 };
+    const o = { start: 1, end: 11, channels: 1 as const, targetLufs: -19, truePeakDb: -1.5, highpass: true, compressor: false, denoise: false, denoiseDb: 12, dereverbDb: 0, fadeIn: 0.5, fadeOut: 0.5, maxGainDb: 20 };
     const m = await measure(sourceReader(src, a.info, 1, 11), o, { kbps: 96 }, { loudness: a.loudness });
     expect(Math.abs(m.predictedLufs + 19)).toBeLessThan(0.3);
   });

@@ -164,7 +164,7 @@ describe('denoiseRange', () => {
     const { info, src } = await mp3Of(pcm, sr);
 
     const progress: number[] = [];
-    const reader = await denoiseRange(src, info, { start: 1, end: 4.5, channels: 2, denoiseDb: 12 }, { onProgress: p => progress.push(p) });
+    const reader = await denoiseRange(src, info, { start: 1, end: 4.5, channels: 2, denoiseDb: 12, dereverbDb: 0 }, { onProgress: p => progress.push(p) });
     expect(reader.sampleRate).toBe(48000);
     expect(progress.at(-1)).toBe(1);
     let n = 0, chans = 0;
@@ -181,7 +181,7 @@ describe('denoiseRange in segments', () => {
     let seed = 7;
     for (let i = 0; i < x.length; i++) { seed = (seed * 16807) % 2147483647; x[i] += 0.02 * (seed / 2147483647 - 0.5); }
     const { info, src } = await mp3Of(x, sr);
-    const o = { start: 0.5, end: 21.5, channels: 1 as const, denoiseDb: 12 };
+    const o = { start: 0.5, end: 21.5, channels: 1 as const, denoiseDb: 12, dereverbDb: 0 };
     const whole = (await readAll(await denoiseRange(src, info, o)))[0];
     const params = { minSec: 5, warmupSec: 3, fadeSec: 0.5 };
     expect(planDenoise(info, o.start, o.end, 3, params).segments.length).toBe(3);
@@ -201,15 +201,32 @@ describe('denoiseRange in segments', () => {
   }, 30000);
 });
 
+describe('the late-reverb stage in the pass', () => {
+  it('changes the signal, keeps its length, and gives the same in segments as in one pass', async () => {
+    await loadDenoiser(wasm);
+    const sr = 44100, { info, src } = await mp3Of(syllables(sr, 22), sr);
+    const plain = { start: 0.5, end: 21.5, channels: 1 as const, denoiseDb: 12, dereverbDb: 0 }, o = { ...plain, dereverbDb: 10 };
+    const without = (await readAll(await denoiseRange(src, info, plain)))[0];
+    const whole = (await readAll(await denoiseRange(src, info, o)))[0];
+    expect(whole.length).toBe(without.length);
+    expect(20 * Math.log10(rms(whole.map((v, i) => v - without[i])) / rms(without))).toBeGreaterThan(-30); // it does something
+    const params = { minSec: 5, warmupSec: 3, fadeSec: 0.5 };
+    const split = (await readAll(await denoiseRange(src, info, o, { threads: { workers: 3, runner: inProcess(src, info) }, params })))[0];
+    expect(split.length).toBe(whole.length);
+    expect(20 * Math.log10(rms(whole.map((v, i) => v - split[i])) / rms(whole))).toBeLessThan(-30);
+  }, 60000);
+});
+
 describe('denoisedPart', () => {
   it('serves a cut inside a denoised window like a pass over the cut itself', async () => {
     await loadDenoiser(wasm);
     const sr = 44100, { info, src } = await mp3Of(syllables(sr, 16), sr);
-    const window = { start: 0.3, end: 15.7, channels: 1 as const, denoiseDb: 12 }, cut = { start: 4.37, end: 12.81, channels: 1 as const, denoiseDb: 12 };
+    const window = { start: 0.3, end: 15.7, channels: 1 as const, denoiseDb: 12, dereverbDb: 0 }, cut = { start: 4.37, end: 12.81, channels: 1 as const, denoiseDb: 12, dereverbDb: 0 };
     expect(covers(window, cut)).toBe(true);
     expect(covers(window, { ...cut, end: 15.8 })).toBe(false);
     expect(covers(window, { ...cut, channels: 2 })).toBe(false);
     expect(covers(window, { ...cut, denoiseDb: 18 })).toBe(false);
+    expect(covers(window, { ...cut, dereverbDb: 10 })).toBe(false);
     const part = (await readAll(denoisedPart(await denoiseRange(src, info, window), info, window, cut)))[0];
     const direct = (await readAll(await denoiseRange(src, info, cut)))[0];
     expect(part.length).toBe(direct.length);
@@ -227,7 +244,7 @@ describe('denoiseRange on quiet recordings', () => {
     const sr = 48000, x = syllables(sr, 12);
     let seed = 3;
     for (let i = 0; i < x.length; i++) { seed = (seed * 16807) % 2147483647; x[i] = 0.04 * x[i] + 0.002 * (seed / 2147483647 - 0.5); }
-    const o = { start: 0.5, end: 11.5, channels: 1 as const, denoiseDb: 12 };
+    const o = { start: 0.5, end: 11.5, channels: 1 as const, denoiseDb: 12, dereverbDb: 0 };
     const lufs = async (r: RangeReader) => { const m = new LoudnessMeter(r.sampleRate, 1); await r.read(chs => { m.push(chs); }); return m.integrated(); };
     /** loudness change by the filter (dB) */
     const change = async (pcm: Float32Array, levelLufs?: number) => {

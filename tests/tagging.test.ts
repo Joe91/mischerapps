@@ -45,8 +45,9 @@ describe('tags required for publishing', () => {
 
 describe('the app\'s mark', () => {
   it('names the day and what was done to the audio', () => {
-    const o = { targetLufs: -19, compressor: true, denoise: true, denoiseDb: 18 };
-    expect(processedNote(o, new Date(2026, 9, 24))).toBe('bearbeitet 24.10.2026 · -19 LUFS · Hall & Rauschen 18 dB · Kompression');
+    const o = { targetLufs: -19, compressor: true, denoise: true, denoiseDb: 18, dereverbDb: 10 };
+    expect(processedNote(o, new Date(2026, 9, 25))).toBe('bearbeitet 25.10.2026 · -19 LUFS · Hall & Rauschen 18 dB · Nachhall 10 dB · Kompression');
+    expect(processedNote({ ...o, dereverbDb: 0 }, new Date(2026, 9, 24))).toBe('bearbeitet 24.10.2026 · -19 LUFS · Hall & Rauschen 18 dB · Kompression');
     expect(processedNote({ ...o, compressor: false, denoise: false }, new Date(2026, 9, 24))).toBe('bearbeitet 24.10.2026 · -19 LUFS');
   });
 });

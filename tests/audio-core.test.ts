@@ -170,7 +170,7 @@ describe('MP3 index and seeking', async () => {
   it('measures and plans gain towards the target', async () => {
     const m = await measure(sourceReader(src, info, 2, 18), {
       start: 2, end: 18, channels: 1, targetLufs: -19, truePeakDb: -1.5, highpass: true,
-      compressor: false, denoise: false, denoiseDb: 12, fadeIn: 0.5, fadeOut: 1.5, maxGainDb: 20,
+      compressor: false, denoise: false, denoiseDb: 12, dereverbDb: 0, fadeIn: 0.5, fadeOut: 1.5, maxGainDb: 20,
     }, { kbps: 64 });
     expect(Math.abs(m.predictedLufs + 19)).toBeLessThan(0.3);
   });

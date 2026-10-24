@@ -33,6 +33,8 @@ export interface Settings {
   denoise: boolean;
   /** how much room sound and noise the denoiser may remove at most (dB) */
   denoiseDb: number;
+  /** with denoising: how much the late reverb under the voice is lowered at most (dB, 0 = not at all) */
+  dereverbDb: number;
   fadeIn: number;
   fadeOut: number;
   maxGainDb: number;
@@ -63,6 +65,7 @@ export function defaultSettings(): Settings {
     compressor: true,
     denoise: true, // ≈ 1 min per 30 min on 6 cores, mostly done in the background during the cut step
     denoiseDb: DENOISE_ATTEN_DB,
+    dereverbDb: 0, // off until a blind test confirms it (see DEREVERB_TRIED_DB)
     fadeIn: 0.5,
     fadeOut: 0.5, // sermons end with "Amen": just enough to avoid a click
     maxGainDb: 55, // desk recordings can be very quiet (−52 LUFS); the denoiser keeps the lifted noise down
@@ -81,6 +84,9 @@ export function defaultSettings(): Settings {
 
 /** Raised when changed defaults should replace what browsers and the server saved before. */
 export const SETTINGS_REV = 5;
+
+/** Late reverb under the voice: 10 dB sounded best in a first listening comparison (with 6 dB and without). */
+export const DEREVERB_TRIED_DB = 10;
 
 /**
  * Saved values (browser, server, imported file) from an older revision: drops those whose default has
@@ -120,7 +126,7 @@ export const settingsStore = createStore<Settings>('audio-tools.predigt-schnitt.
 
 /** Keys the admin sets for everybody; they live on the server. */
 export const SHARED_KEYS = [
-  'loudnessPreset', 'exportPreset', 'highpass', 'compressor', 'denoise', 'denoiseDb', 'fadeIn', 'fadeOut', 'maxGainDb', 'namePattern',
+  'loudnessPreset', 'exportPreset', 'highpass', 'compressor', 'denoise', 'denoiseDb', 'dereverbDb', 'fadeIn', 'fadeOut', 'maxGainDb', 'namePattern',
   'congregation', 'albumArtist', 'genre', 'preacher', 'titlePrefix', 'coverDataUrl', 'minSermonMin', 'mergeGapSec', 'rev',
 ] as const satisfies readonly (keyof Settings)[];
 
@@ -131,7 +137,7 @@ export function normalizeSettings(s: Settings): Settings {
   const d = defaultSettings();
   if (!(s.loudnessPreset in LOUDNESS_PRESETS)) s.loudnessPreset = d.loudnessPreset;
   if (!(s.exportPreset in EXPORT_PRESETS)) s.exportPreset = d.exportPreset;
-  for (const k of ['fadeIn', 'fadeOut', 'maxGainDb', 'denoiseDb', 'minSermonMin', 'mergeGapSec'] as const) {
+  for (const k of ['fadeIn', 'fadeOut', 'maxGainDb', 'denoiseDb', 'dereverbDb', 'minSermonMin', 'mergeGapSec'] as const) {
     if (typeof s[k] !== 'number' || !isFinite(s[k]) || s[k] < 0) s[k] = d[k];
   }
   return s;

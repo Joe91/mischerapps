@@ -76,6 +76,7 @@ export function processOptions(ctx: Ctx): ProcessOptions {
   return {
     start: ctx.state.start, end: ctx.state.end, channels: ep.channels,
     targetLufs: lp.lufs, truePeakDb: lp.tp, highpass: c.highpass, compressor: c.compressor, denoise: c.denoise, denoiseDb: ctx.settings.denoiseDb,
+    dereverbDb: ctx.settings.dereverbDb,
     fadeIn: c.fadeIn, fadeOut: c.fadeOut, maxGainDb: ctx.settings.maxGainDb,
   };
 }

@@ -9,6 +9,7 @@ import { LoudnessMeter, TruePeakMeter, integrateSubBlocks } from './loudness';
 import { Biquad, Compressor, Limiter, Resampler, dbToLin, fadeGain, linToDb, rbj } from './dsp';
 import { PcmStore, readJoined } from './pcm-store';
 import { DENOISE_RATE, Denoiser, loadDenoiser } from '../denoise/denoise';
+import { Dereverb } from './dereverb';
 
 export const PEAKS_PER_SEC = 50;
 
@@ -100,6 +101,8 @@ export interface ProcessOptions {
   denoise: boolean;
   /** most the denoiser may lower room sound and noise (dB) */
   denoiseDb: number;
+  /** after the denoiser: most the late reverb under the voice is lowered (dB, 0 = not at all; see dereverb.ts) */
+  dereverbDb: number;
   fadeIn: number;
   fadeOut: number;
   maxGainDb: number;
@@ -139,11 +142,12 @@ export const sourceReader = (src: ByteSource, info: AudioInfo, start: number, en
 });
 
 /** What a denoised copy depends on: other options can change without denoising again. */
-export type DenoiseRange = Pick<ProcessOptions, 'start' | 'end' | 'channels' | 'denoiseDb'>;
+export type DenoiseRange = Pick<ProcessOptions, 'start' | 'end' | 'channels' | 'denoiseDb' | 'dereverbDb'>;
 
 /** A denoised `window` can serve every range inside it (see denoisedPart). */
 export const covers = (window: DenoiseRange, o: DenoiseRange) =>
-  window.channels === o.channels && window.denoiseDb === o.denoiseDb && window.start <= o.start && o.end <= window.end;
+  window.channels === o.channels && window.denoiseDb === o.denoiseDb && window.dereverbDb === o.dereverbDb &&
+  window.start <= o.start && o.end <= window.end;
 
 /** 48 kHz : source rate as integers, e.g. 160 : 147 for 44.1 kHz (exact sample counts, no rounding). */
 function denoiseRatio(sr: number) {
@@ -229,9 +233,9 @@ export function planDenoise(info: Pick<AudioInfo, 'sampleRate' | 'samples'>, sta
 /**
  * What every segment of one denoising pass uses. `gainDb` lifts the input to a normal level first
  * and is taken back afterwards: at −50 LUFS (desk recordings) the model takes the voice partly for
- * noise (−4.6 dB on speech instead of −0.2 dB at a normal level).
+ * noise (−4.6 dB on speech instead of −0.2 dB at a normal level). `dereverbDb`: the stage after the model (0: none).
  */
-export interface DenoiseConfig { channels: 1 | 2; attenDb: number; gainDb: number; }
+export interface DenoiseConfig { channels: 1 | 2; attenDb: number; gainDb: number; dereverbDb: number; }
 
 /** Loudness the model works best at (that of the recordings it was tried with). */
 const DENOISE_LEVEL_LUFS = -23;
@@ -253,7 +257,10 @@ export async function denoiseSegment(src: ByteSource, info: AudioInfo, seg: Deno
     }
     pos += n;
   };
-  const push = (chs: Float32Array[]) => { applyGain(chs, g); take(chs.map((c, i) => dfs[i].process(c))); };
+  // the late reverb under the voice, after the model (it clears the pauses, not what lies under the speech)
+  const drs = cfg.dereverbDb > 0 ? Array.from({ length: channels }, () => new Dereverb(DENOISE_RATE, cfg.dereverbDb)) : null;
+  const after = (chs: Float32Array[]) => (drs ? chs.map((c, i) => drs[i].process(c)) : chs);
+  const push = (chs: Float32Array[]) => { applyGain(chs, g); take(after(chs.map((c, i) => dfs[i].process(c)))); };
   try {
     await decodeRange(src, info, seg.from / sr, seg.to / sr, async raw => {
       const chs = toChannels(raw, channels), n = chs[0].length;
@@ -267,7 +274,8 @@ export async function denoiseSegment(src: ByteSource, info: AudioInfo, seg: Deno
       }
     });
     if (rs) push(rs.flush());
-    take(dfs.map(d => d.flush()));
+    take(after(dfs.map(d => d.flush())));
+    if (drs) take(drs.map(d => d.flush()));
   } finally {
     dfs.forEach(d => d.free());
   }
@@ -310,7 +318,7 @@ export async function denoiseRange(src: ByteSource, info: AudioInfo, o: DenoiseR
     level = meter.integrated();
   }
   const cfg: DenoiseConfig = {
-    channels: o.channels, attenDb: o.denoiseDb,
+    channels: o.channels, attenDb: o.denoiseDb, dereverbDb: o.dereverbDb,
     gainDb: isFinite(level) ? Math.min(50, Math.max(0, DENOISE_LEVEL_LUFS - level)) : 0,
   };
   const plan = planDenoise(info, o.start, o.end, opts.threads?.workers ?? 1, opts.params);
