@@ -5,7 +5,7 @@
 // It is parsed again only when the file changes, so the public GET /api/plan stays cheap.
 import { readFile, stat, utimes } from 'node:fs/promises';
 import { join } from 'node:path';
-import { answerCells, planColumns, readPlanXlsx, PlanFormatError, type Availability, type Plan } from '../packages/plan/plan';
+import { answerCells, locatePlan, readPlan, PlanFormatError, type Availability, type Plan, type PlanSheet, type planColumns } from '../packages/plan/plan';
 import { toIsoDate, toText } from '../packages/plan/cells';
 import { serialQueue, writeAtomic } from './files';
 import { SyncedFile, type CloudFile } from './cloud-file';
@@ -22,29 +22,37 @@ export class PlanDateMissing extends Error {}
 /** How often OpenCloud is asked whether the plan changed. */
 const CHECK_EVERY_MS = 2 * 60_000;
 
+/** The workbook and its sheets for locatePlan/readPlan. Throws PlanFormatError if it is no xlsx file. */
+function openPlan(data: Uint8Array) {
+  try {
+    const x = new Xlsx(data);
+    const sheets: PlanSheet[] = x.sheets.map((s, i) => ({ name: s.name, rows: x.rows(i) }));
+    const toDate = (v: unknown) => (typeof v === 'number' ? x.serialToIso(v) : toIsoDate(v));
+    return { x, sheets, toDate };
+  } catch (e) {
+    throw e instanceof XlsxError ? new PlanFormatError(e.message) : e;
+  }
+}
+
+/** The plan in an xlsx file (see locatePlan). Throws PlanFormatError. */
+export async function readPlanXlsx(file: Blob | Uint8Array): Promise<Plan & { hidden: number }> {
+  const { sheets, toDate } = openPlan(file instanceof Blob ? new Uint8Array(await file.arrayBuffer()) : file);
+  return readPlan(sheets, toDate);
+}
+
 /**
- * Changes cells in the row for `date` (first sheet; header row with "Datum" and "Mischer" as in readPlanXlsx):
- * `edit` gets the columns and the current texts and returns column → new text. Only those cells change. Throws
- * PlanDateMissing, or PlanFormatError for a file without such a header or a cell with a formula.
+ * Changes cells in the row for `date` (the row readPlanXlsx reads it from): `edit` gets the columns and the current
+ * texts and returns column → new text. Only those cells change. Throws PlanDateMissing, or PlanFormatError for a
+ * file without a plan header or a cell with a formula.
  */
 function editRow(data: Uint8Array, date: string,
   edit: (col: ReturnType<typeof planColumns>, text: (col: number) => string) => Map<number, string>): Uint8Array {
-  let x: Xlsx, rows;
-  try { x = new Xlsx(data); rows = x.rows(0); } catch (e) {
-    throw e instanceof XlsxError ? new PlanFormatError(e.message) : e;
-  }
-  const numbers = [...rows.keys()].sort((a, b) => a - b);
-  const norm = (v: unknown) => String(v ?? '').trim().toLowerCase();
-  const header = numbers.slice(0, 20).find(r => [...rows.get(r)!.values()].some(v => norm(v) === 'datum') && [...rows.get(r)!.values()].some(v => norm(v) === 'mischer'));
-  if (header === undefined) throw new PlanFormatError('no header with "Datum" and "Mischer"');
-  const titles: string[] = [];
-  for (const [c, v] of rows.get(header)!) titles[c] = norm(v);
-  const col = planColumns(Array.from(titles, t => t ?? ''));
-  const iso = (v: unknown) => (typeof v === 'number' ? x.serialToIso(v) : toIsoDate(v));
-  const row = numbers.find(r => r > header && iso(rows.get(r)!.get(col.date)) === date);
-  if (row === undefined) throw new PlanDateMissing(date);
+  const { x, sheets, toDate } = openPlan(data);
+  const at = locatePlan(sheets, toDate).dates.find(d => d.date === date);
+  if (!at) throw new PlanDateMissing(date);
+  const cells = sheets[at.sheet].rows.get(at.row)!;
   try {
-    for (const [c, text] of edit(col, c => toText(rows.get(row)!.get(c)))) x.setText(0, row, c, text);
+    for (const [c, text] of edit(at.col, c => toText(cells.get(c)))) x.setText(at.sheet, at.row, c, text);
   } catch (e) {
     throw e instanceof XlsxError ? new PlanFormatError(e.message) : e;
   }
@@ -80,7 +88,7 @@ export class PlanStore {
 
   /** A new version from OpenCloud: refused (old copy stays) if it cannot be read, otherwise kept as the copy. */
   private async keep(data: Uint8Array, modified: string) {
-    await readPlanXlsx(new Blob([data as Uint8Array<ArrayBuffer>]));
+    await readPlanXlsx(data);
     await writeAtomic(this.file, data);
     this.cache = null; // two versions may share size and (whole-second) time
     if (modified) await utimes(this.file, new Date(modified), new Date(modified)); // "Stand" = last change in OpenCloud
@@ -109,7 +117,7 @@ export class PlanStore {
     }
     const key = `${s.mtimeMs}:${s.size}`;
     if (this.cache?.key !== key) {
-      const { entries, names } = await readPlanXlsx(new Blob([new Uint8Array(await readFile(this.file))]));
+      const { entries, names } = await readPlanXlsx(new Uint8Array(await readFile(this.file)));
       this.cache = { key, plan: { entries, names } };
     }
     return { plan: this.cache.plan, updated: s.mtime.toISOString(), syncError: this.syncError };
@@ -118,7 +126,7 @@ export class PlanStore {
   /** Checks the upload and replaces the plan. Throws PlanFormatError (the old plan stays) if it cannot be read. */
   async importXlsx(buf: Buffer): Promise<{ dates: number; hidden: number }> {
     if (this.cloud) throw new PlanReadOnly();
-    const { entries, hidden } = await readPlanXlsx(new Blob([new Uint8Array(buf)]));
+    const { entries, hidden } = await readPlanXlsx(new Uint8Array(buf));
     await writeAtomic(this.file, buf);
     return { dates: entries.length, hidden };
   }

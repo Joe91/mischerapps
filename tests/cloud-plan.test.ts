@@ -8,8 +8,7 @@ import writeExcelFile from 'write-excel-file/universal';
 import { createApi } from '../server/api';
 import { hashPassword } from '../server/auth';
 import { LocalStore } from '../server/sermon-store';
-import { setMischer } from '../server/plan-store';
-import { readPlanXlsx } from '../packages/plan/plan';
+import { readPlanXlsx, setMischer } from '../server/plan-store';
 import { planSheet } from './plan.test';
 
 const bytes = async (b: Blob) => new Uint8Array(await b.arrayBuffer());

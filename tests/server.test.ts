@@ -10,7 +10,7 @@ import { createStatic } from '../server/static';
 import { hashPassword, LoginLimiter, signSession, verifyPassword, verifySession } from '../server/auth';
 import { parseConfig, ConfigError, type ServerConfig } from '../server/config';
 import { isoDate } from '../packages/plan/cells';
-import { readPlanXlsx } from '../packages/plan/plan';
+import { readPlanXlsx } from '../server/plan-store';
 import { tagMp3 } from '../packages/audio-core/tags';
 import writeExcelFile from 'write-excel-file/universal';
 

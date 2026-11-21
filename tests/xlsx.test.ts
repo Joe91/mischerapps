@@ -2,9 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { strToU8, unzipSync, zipSync, strFromU8 } from 'fflate';
 import writeExcelFile from 'write-excel-file/universal';
 import { colIndex, colName, Xlsx, XlsxError } from '../server/xlsx';
-import { PlanDateMissing, PlanFormatError, setAvailability, setMischer } from '../server/plan-store';
+import { PlanDateMissing, PlanFormatError, readPlanXlsx, setAvailability, setMischer } from '../server/plan-store';
 import { readOverview } from '../server/overview-store';
-import { readPlanXlsx } from '../packages/plan/plan';
 import { planSheet } from './plan.test';
 
 const bytes = async (b: Blob) => new Uint8Array(await b.arrayBuffer());

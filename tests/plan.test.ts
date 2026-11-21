@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import writeExcelFile from 'write-excel-file/universal';
-import { publicPlan, readPlanXlsx, PlanFormatError } from '../packages/plan/plan';
+import { publicPlan, PlanFormatError } from '../packages/plan/plan';
+import { readPlanXlsx, setMischer } from '../server/plan-store';
 
 const day = (iso: string) => ({ value: new Date(`${iso}T00:00:00Z`), format: 'dd.mm.yyyy' });
 
@@ -34,6 +35,37 @@ describe('Einsatzplan xlsx', () => {
   it('reads the key of Kürzel and full names below the dates (a first name alone is no key)', async () => {
     const { names } = await readPlanXlsx(await planSheet());
     expect(names).toEqual({ KL: 'Karl Lang', AS: 'Alex Sommer', JD: 'Jo Dorn', MS: 'Maria Stein', RR: 'Rita Rot' });
+  });
+
+  describe('one sheet per year', () => {
+    const header = ['Datum', 'Besonderheiten', 'Musikteam', 'Teamleitung', 'Mischer', 'Mischer möglich', 'nicht möglich', 'Beamer'];
+    const row = (iso: string, team: string, mischer: string | null = null) => [day(iso), null, team, null, mischer, null, null, null];
+    // as in the church's file: the new year in front, a row of the old year left in it, older years and other sheets
+    const workbook = () => writeExcelFile([
+      { sheet: 'Musik+Mischer+Beamer 2027', data: [header, row('2027-01-10', 'A-Team'), row('2026-12-13', 'copied row')] },
+      { sheet: 'Musik+Mischer+Beamer 2026', data: [header, row('2026-11-29', 'B-Team', 'KL'), row('2026-12-13', 'C-Team'),
+        [null, null, null, null, 'KL', 'Karl Lang', null, null]] },
+      { sheet: 'Musik+Mischer+Beamer 2025', data: [header, row('2025-12-21', 'old')] },
+      { sheet: 'Mischerliste', data: [['Name', 'Telefon']] },
+    ] as never).toBlob();
+    const bytes = async (b: Blob) => new Uint8Array(await b.arrayBuffer());
+
+    it('reads the newest two years, each date from the sheet of its year', async () => {
+      const { entries, names } = await readPlanXlsx(await workbook());
+      expect(entries.map(e => [e.date, e.team, e.mischer])).toEqual([
+        ['2026-11-29', 'B-Team', 'KL'], ['2026-12-13', 'C-Team', ''], ['2027-01-10', 'A-Team', ''],
+      ]);
+      expect(names).toEqual({ KL: 'Karl Lang' });
+    });
+
+    it('writes into the row it reads the date from', async () => {
+      let data: Uint8Array = await bytes(await workbook());
+      data = setMischer(data, '2026-12-13', 'JD');
+      data = setMischer(data, '2027-01-10', 'AS');
+      const { entries } = await readPlanXlsx(data);
+      expect(entries.map(e => [e.date, e.mischer])).toEqual([['2026-11-29', 'KL'], ['2026-12-13', 'JD'], ['2027-01-10', 'AS']]);
+      expect(() => setMischer(data, '2025-12-21', 'JD')).toThrow(); // last year but one is not read
+    });
   });
 
   it('rejects files without a "Datum" and "Mischer" header, and files that are no xlsx', async () => {

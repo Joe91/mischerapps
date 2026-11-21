@@ -162,8 +162,11 @@ Der Server liest sie von dort, fragt alle zwei Minuten nach Änderungen (lädt s
 die zuletzt gelesene Fassung als `data/einsatzplan.xlsx`. Kann OpenCloud gerade nicht gelesen werden, zeigt die Startseite diese
 Fassung mit einem Hinweis. *↻ Aus OpenCloud aktualisieren* (Admin) liest sofort neu.
 
-Gelesen wird nur das **erste Blatt**: Die Spalten werden an ihrer Überschrift erkannt (`Datum`, `Musikteam`, `Teamleitung`,
-`Mischer`, `Beamer`, optional `Besonderheiten` und `Bemerkungen`), ihre Reihenfolge und weitere Spalten sind egal.
+Gelesen werden die **zwei neuesten Jahresblätter** (Blätter mit einer Jahreszahl im Namen, z. B. „Musik+Mischer+Beamer 2027“
+und „… 2026“; ihre Reihenfolge in der Datei ist egal), ohne Jahresblätter das erste Blatt mit passender Überschrift. Ein Termin
+zählt nur aus dem Blatt seines Jahres – eine aus dem Vorjahr übrig gebliebene Zeile im neuen Blatt wird nicht gelesen. Die
+Spalten werden an ihrer Überschrift erkannt (`Datum`, `Musikteam`, `Teamleitung`, `Mischer`, `Beamer`, optional
+`Besonderheiten` und `Bemerkungen`), ihre Reihenfolge und weitere Spalten sind egal.
 
 - **Mischer eintragen (Admin):** ✎ neben dem Mischer eines Termins (Startseite oder Termine), Kürzel eingeben (Vorschläge aus der
   Legende; ein Kürzel, das nicht in der Legende steht, wird als möglicher Tippfehler angezeigt; leer = niemand).
