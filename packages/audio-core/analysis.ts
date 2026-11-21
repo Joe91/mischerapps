@@ -30,6 +30,8 @@ export interface AnalysisParams {
   /** and a part shorter than tailPart after a pause of at least tailGap at the end (announcement after the "Amen") */
   tailGap: number;
   tailPart: number;
+  /** speech pieces shorter than this (rustling, a cough) do not interrupt a pause there */
+  blipLen: number;
   /** windows this far below the typical speech level count as silence (dB) */
   quietDb: number;
   minSermon: number;
@@ -43,7 +45,7 @@ export interface AnalysisParams {
 
 export const DEFAULT_PARAMS: AnalysisParams = {
   winSec: 3, stepSec: 0.5, medianSec: 5, hiThr: 0.6, loThr: 0.4,
-  mergeGap: 8, quietGap: 20, edgeGap: 10, edgePart: 180, tailGap: 5, tailPart: 15, quietDb: 15, minSermon: 480, snapRange: 3, amenLen: 1.5, amenGap: 2.5, preRoll: 0.3, postRoll: 0.8,
+  mergeGap: 8, quietGap: 20, edgeGap: 10, edgePart: 180, tailGap: 5, tailPart: 15, blipLen: 2, quietDb: 15, minSermon: 480, snapRange: 3, amenLen: 1.5, amenGap: 2.5, preRoll: 0.3, postRoll: 0.8,
 };
 
 /** Per-window features; exported for calibration (scripts/bench.ts --csv). */
@@ -224,7 +226,10 @@ export function mergeSpeech(list: Segment[], gap: number): Segment[] {
  * Long pauses in the middle stay – a sermon may have a silent moment.
  */
 export function trimEdges(pieces: Segment[], p: AnalysisParams): Segment[] {
-  let b = pieces;
+  // pauses are measured without blips: a second of rustling must not split a long pause into short ones
+  const core = pieces.filter(s => s.end - s.start >= p.blipLen);
+  if (!core.length) return pieces;
+  let b = core;
   for (let changed = true; changed && b.length > 1;) {
     changed = false;
     for (let i = 0; i < b.length - 1; i++) {
@@ -238,7 +243,10 @@ export function trimEdges(pieces: Segment[], p: AnalysisParams): Segment[] {
       if (gap >= p.edgeGap || (gap >= p.tailGap && part < p.tailPart)) { b = b.slice(0, i); changed = true; break; }
     }
   }
-  return b;
+  // blips stay where nothing was cut (a short "Amen" at the end), and go with the part that was cut
+  const from = b[0] === core[0] ? -Infinity : b[0].start;
+  const to = b[b.length - 1] === core[core.length - 1] ? Infinity : b[b.length - 1].end;
+  return pieces.filter(s => s.start >= from && s.end <= to);
 }
 
 /** Seconds of music within `range` seconds before (dir -1) or after (dir +1) a time. */

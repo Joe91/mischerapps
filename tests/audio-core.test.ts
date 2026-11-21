@@ -31,6 +31,17 @@ describe('trimEdges', () => {
     expect(trimEdges(b, DEFAULT_PARAMS)).toEqual(sermon);
   });
 
+  it('does not let rustling in the pause after a reading split it into short pauses', () => {
+    // as in a real recording: 64 s reading, 15 s pause with two blips (0.5 s, 1 s), sermon
+    const b = [sp(0, 63.8), sp(70.8, 71.3), sp(77.8, 78.8), ...sermon];
+    expect(trimEdges(b, DEFAULT_PARAMS)).toEqual(sermon);
+  });
+
+  it('keeps a short closing word just after the sermon', () => {
+    const b = [...sermon, sp(2113, 2114)];
+    expect(trimEdges(b, DEFAULT_PARAMS)).toEqual(b);
+  });
+
   it('keeps long pauses inside the sermon and a short greeting at its start', () => {
     const b = [sp(700, 703), sp(709, 900), sp(915, 1500), sp(1530, 2110)];
     expect(trimEdges(b, DEFAULT_PARAMS)).toEqual(b);
